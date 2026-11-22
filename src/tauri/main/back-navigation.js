@@ -6,7 +6,7 @@ export function installBackNavigationBridge() {
     window[BACK_HANDLER_KEY] = handleBackNavigation;
 }
 
-function handleBackNavigation() {
+export function handleBackNavigation() {
     if (consumeBackNavigationHandlers()) {
         return true;
     }
@@ -21,6 +21,25 @@ function handleBackNavigation() {
 
     if (closeFloatingPanel()) {
         return true;
+    }
+
+    // Legacy menus and message actions belong to the current conversation.
+    // Dismiss them before the shell's page stack gets a chance to leave it.
+    const mobileRolesRoot = document.body.classList.contains('tt-mobile-chat-shell')
+        && document.body.dataset.ttChatView === 'roles';
+    if (triggerBlankClickIfNeeded({ includeDrawers: false })) {
+        return true;
+    }
+
+    if (consumeBackNavigationHandlers('navigation')) {
+        return true;
+    }
+
+    // The mobile conversation list is the root page, even though it reuses a
+    // native drawer. A root Back belongs to Android, not the legacy drawer or
+    // close-chat fallbacks. Visible transient menus still get first refusal.
+    if (mobileRolesRoot) {
+        return triggerBlankClickIfNeeded({ includeDrawers: false });
     }
 
     if (triggerBlankClickIfNeeded()) {
@@ -128,8 +147,8 @@ function closeFloatingPanel() {
     return false;
 }
 
-function triggerBlankClickIfNeeded() {
-    const hasOpenDrawer = Boolean(document.querySelector('.openDrawer:not(.pinnedOpen)'));
+function triggerBlankClickIfNeeded({ includeDrawers = true } = {}) {
+    const hasOpenDrawer = includeDrawers && Boolean(document.querySelector('.openDrawer:not(.pinnedOpen)'));
     const hasOptionsMenu = isVisible(document.getElementById('options'));
     const hasExtensionsMenu = isVisible(document.getElementById('extensionsMenu'));
     const hasExtraMessageButtons = Boolean(document.querySelector('.extraMesButtons.visible'));

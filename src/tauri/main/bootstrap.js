@@ -388,6 +388,13 @@ export function bootstrapTauriMain() {
             .then(({ installGenerationParamsPanel }) => installGenerationParamsPanel())
             .catch((error) => { console.error('TauriTavern: Failed to install generation parameter panel:', error); });
     });
+    if (isMobile) {
+        eventSource.once(event_types.APP_READY, () => {
+            void import('../../scripts/mobile-chat-shell-runtime.js')
+                .then(({ installMobileChatShellRuntime }) => installMobileChatShellRuntime())
+                .catch((error) => { console.error('TauriTavern: Failed to install mobile chat navigation:', error); });
+        });
+    }
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
         .then(({ installDynamicTheme }) => installDynamicTheme()));
     if (!isEmbeddedRuntimeTakeoverDisabled()) {

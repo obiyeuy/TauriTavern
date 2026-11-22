@@ -18,6 +18,7 @@ async function openSession(options) {
         await Promise.race([Promise.all([ready, saved, extensionsLoaded]), failed]);
         assert.equal(window.document.getElementById('extensions_details').classList.contains('warning'), false);
         assert.equal(window.webHostFixtureActivated, true);
+        if (options?.identity?.kind === 'mobile') await main.selectCharacterById(0);
         return { ...runtime, main, errors, failed };
     } catch (error) {
         await window.happyDOM.close();

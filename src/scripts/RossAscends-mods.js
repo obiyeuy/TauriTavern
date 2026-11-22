@@ -1,4 +1,5 @@
 import { isMobileHost } from './util/host-identity.js';
+import { t } from './i18n.js';
 import { DOMPurify, Bowser } from '../lib.js';
 import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
 import { installChatInputFullscreenEditor } from './chat-input-fullscreen-editor.js';
@@ -343,7 +344,7 @@ export async function favsToHotswap() {
 function RA_checkOnlineStatus() {
     if (online_status == 'no_connection') {
         const send_textarea = $('#send_textarea');
-        send_textarea.attr('placeholder', send_textarea.attr('no_connection_text')); //Input bar placeholder tells users they are not connected
+        send_textarea.attr('placeholder', isMobileHost() ? t`Connect a model to chat` : send_textarea.attr('no_connection_text'));
         $('#send_form').addClass('no-connection');
         $('#send_but').addClass('displayNone'); //send button is hidden when not connected;
         $('#mes_continue').addClass('displayNone'); //continue button is hidden when not connected;
@@ -354,7 +355,7 @@ function RA_checkOnlineStatus() {
     } else {
         if (online_status !== undefined && online_status !== 'no_connection') {
             const send_textarea = $('#send_textarea');
-            send_textarea.attr('placeholder', send_textarea.attr('connected_text')); //on connect, placeholder tells user to type message
+            send_textarea.attr('placeholder', isMobileHost() ? t`Write a message…` : send_textarea.attr('connected_text'));
             $('#send_form').removeClass('no-connection');
             $('#API-status-top').removeClass('fa-plug-circle-exclamation redOverlayGlow');
             $('#API-status-top').addClass('fa-plug');

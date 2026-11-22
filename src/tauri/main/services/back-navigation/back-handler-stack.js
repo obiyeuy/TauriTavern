@@ -1,6 +1,6 @@
 // @ts-check
 
-/** @type {Array<() => boolean>} */
+/** @type {Array<{ handler: () => boolean; layer: 'overlay' | 'navigation' }>} */
 const backHandlers = [];
 
 /**
@@ -10,14 +10,16 @@ const backHandlers = [];
  * native Android back bridge expects an immediate boolean result.
  *
  * @param {() => boolean} handler
+ * @param {{ layer?: 'overlay' | 'navigation' }} [options]
  * @returns {() => void}
  */
-export function pushBackNavigationHandler(handler) {
+export function pushBackNavigationHandler(handler, { layer = 'overlay' } = {}) {
     if (typeof handler !== 'function') {
         throw new Error('Back navigation handler must be a function');
     }
 
-    backHandlers.push(handler);
+    const entry = { handler, layer };
+    backHandlers.push(entry);
 
     let active = true;
     return () => {
@@ -26,17 +28,18 @@ export function pushBackNavigationHandler(handler) {
         }
         active = false;
 
-        const index = backHandlers.lastIndexOf(handler);
+        const index = backHandlers.lastIndexOf(entry);
         if (index >= 0) {
             backHandlers.splice(index, 1);
         }
     };
 }
 
-export function consumeBackNavigationHandlers() {
+/** @param {'overlay' | 'navigation'} [layer] */
+export function consumeBackNavigationHandlers(layer = 'overlay') {
     for (let index = backHandlers.length - 1; index >= 0; index -= 1) {
-        const handler = backHandlers[index];
-        if (handler?.()) {
+        const entry = backHandlers[index];
+        if (entry?.layer === layer && entry.handler()) {
             return true;
         }
     }

@@ -41,6 +41,7 @@ export const event_types = {
     WORLDINFO_SETTINGS_UPDATED: 'worldinfo_settings_updated',
     WORLDINFO_UPDATED: 'worldinfo_updated',
     CHARACTER_EDITOR_OPENED: 'character_editor_opened',
+    CHARACTER_SELECTED: 'character_selected',
     CHARACTER_EDITED: 'character_edited',
     CHARACTER_PAGE_LOADED: 'character_page_loaded',
     CHARACTER_GROUP_OVERLAY_STATE_CHANGE_BEFORE: 'character_group_overlay_state_change_before',

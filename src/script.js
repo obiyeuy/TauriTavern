@@ -383,7 +383,7 @@ import { initBulkEdit } from './scripts/bulk-edit.js';
 import { getContext } from './scripts/st-context.js';
 import { extractReasoningFromData, extractReasoningSignatureFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
 import { accountStorage } from './scripts/util/AccountStorage.js';
-import { initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
+import { initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar, getRecentChats } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
 import { captureItemizedPromptsSaveSnapshot, clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, hasItemizedPromptForMessage, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, swapItemizedPrompts, unloadItemizedPrompts, upsertItemizedPromptRecord } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
@@ -864,6 +864,7 @@ registerLifecycleFlushHandler('session-state', flushSessionState, { priority: -1
 
 /** @type {{ resetPage?: boolean, focus?: string }} */
 let characterListRenderIntent = {};
+let characterListRenderRevision = 0;
 
 /** Merge pending navigation with the next debounced list render. */
 export function requestCharacterListRender(intent) {
@@ -1287,7 +1288,10 @@ async function firstLoadInit() {
             }
         }
 
-        const initialChatLoad = autoloadLastChat().catch((error) => {
+        // Mobile starts from the conversation list. Materialize a chat only
+        // after the user chooses it, rather than loading its card and iframes
+        // behind the list at every launch.
+        const initialChatLoad = (isMobileHost() ? Promise.resolve() : autoloadLastChat()).catch((error) => {
             console.error('Failed to auto-load the last chat:', error);
             toastr.error(t`Failed to auto-load the last chat. Check the console for details.`);
         });
@@ -1501,6 +1505,8 @@ export async function selectCharacterById(id, { switchMenu = true, chatFile } = 
         return;
     }
 
+    if (is_send_press) return;
+
     if (selected_group || String(this_chid) !== String(id) || chatFile !== undefined) {
         if (!is_send_press) {
             const persistedChats = chatFile === undefined ? await getPersistedCharacterChats(avatar) : [];
@@ -1545,6 +1551,7 @@ export async function selectCharacterById(id, { switchMenu = true, chatFile } = 
 
     if (!selected_group && String(this_chid) === String(id)) {
         setActiveCharacter(characters[id]);
+        await eventSource.emit(event_types.CHARACTER_SELECTED, id);
     }
 }
 
@@ -1583,7 +1590,7 @@ async function getHiddenBlock(hidden) {
     return $(hiddenBlock);
 }
 
-function getCharacterBlock(item, id) {
+function getCharacterBlock(item, id, recent) {
     let this_avatar = default_avatar;
     if (item.avatar != 'none') {
         this_avatar = getThumbnailUrl('avatar', item.avatar);
@@ -1607,10 +1614,32 @@ function getCharacterBlock(item, id) {
     }
 
     const description = item.data?.creator_notes || '';
-    if (description) {
+    if (description && !isMobileHost()) {
         template.find('.ch_description').text(description);
     } else {
         template.find('.ch_description').hide();
+    }
+
+    if (isMobileHost()) {
+        const preview = document.createElement('div');
+        preview.className = 'tt-chat-preview';
+        // Strip presentation code before deriving text. Never mount card HTML
+        // or initialize its iframe/script just to draw a conversation row.
+        const fragment = document.createElement('template');
+        fragment.innerHTML = String(recent?.mes || description || '').slice(0, 4096);
+        for (const code of fragment.content.querySelectorAll('style, script, iframe, object, template')) code.remove();
+        preview.textContent = fragment.content.textContent.replace(/\s+/g, ' ').trim().slice(0, 180) || t`Start a conversation`;
+        template.find('.character_select_container').append(preview);
+        if (document.body.dataset.ttChatView === 'roles' && recent) template.data('tt-chat-file', recent.chat_name);
+        if (recent?.last_mes) {
+            const date = timestampToMoment(recent.last_mes);
+            const time = document.createElement('time');
+            time.className = 'tt-chat-time';
+            time.dateTime = date.toISOString();
+            time.textContent = date.isSame(new Date(), 'day') ? date.format('HH:mm') : date.format('MM/DD');
+            time.title = date.format('lll');
+            template.find('.character_name_block').append(time);
+        }
     }
 
     const auxFieldName = power_user.aux_field || 'character_version';
@@ -1641,7 +1670,9 @@ function getCharacterBlock(item, id) {
  *
  * @param {boolean} fullRefresh - If true, the list is fully refreshed and the navigation is being reset
  */
-export async function printCharacters(fullRefresh = false) {
+export async function printCharacters(fullRefresh = false, { signal } = {}) {
+    if (signal?.aborted) return;
+    const revision = ++characterListRenderRevision;
     const renderIntent = characterListRenderIntent;
     characterListRenderIntent = {};
     fullRefresh ||= renderIntent.resetPage;
@@ -1652,6 +1683,7 @@ export async function printCharacters(fullRefresh = false) {
     if (fullRefresh) {
         currentScrollTop = 0;
         await delay(1);
+        if (signal?.aborted) return;
     }
 
     // Before printing the personas, we check if we should enable/disable search sorting
@@ -1668,6 +1700,20 @@ export async function printCharacters(fullRefresh = false) {
 
     const entities = getEntitiesList({ doFilter: true });
 
+    // Use the same indexed summaries as the welcome screen. This transient
+    // projection never reads whole chat files or persists a second chat index.
+    const recentByAvatar = new Map();
+    if (isMobileHost() && document.body.dataset.ttChatView === 'roles') {
+        const recent = await getRecentChats({ max: 100, signal });
+        if (signal?.aborted || revision !== characterListRenderRevision) return;
+        for (const summary of recent) {
+            const previous = recentByAvatar.get(summary.avatar);
+            if (!previous || timestampToMoment(summary.last_mes).valueOf() > timestampToMoment(previous.last_mes).valueOf()) {
+                recentByAvatar.set(summary.avatar, summary);
+            }
+        }
+    }
+
     initPagination($('#rm_print_characters_pagination'), {
         ...characterPagination,
         sizeChangerOptions: [10, 25, 50, 100, 250, 500, 1000],
@@ -1680,13 +1726,14 @@ export async function printCharacters(fullRefresh = false) {
             const hidden = (characters.length + groups.length) - displayCount;
             const emptyBlock = !data.length ? await getEmptyBlock() : null;
             const hiddenBlock = hidden > 0 && entitiesFilter.hasAnyFilter() ? await getHiddenBlock(hidden) : null;
+            if (signal?.aborted || revision !== characterListRenderRevision) return;
             const write = () => {
                 $(listId).empty();
                 if (power_user.bogus_folders && isBogusFolderOpen()) $(listId).append(getBackBlock());
                 if (emptyBlock) $(listId).append(emptyBlock);
                 for (const entity of data) {
                     switch (entity.type) {
-                        case 'character': $(listId).append(getCharacterBlock(entity.item, entity.id)); break;
+                        case 'character': $(listId).append(getCharacterBlock(entity.item, entity.id, recentByAvatar.get(entity.item.avatar))); break;
                         case 'group': $(listId).append(getGroupBlock(entity.item)); break;
                         case 'tag': $(listId).append(getTagBlock(entity.item, entity.entities, entity.hidden, entity.isUseless)); break;
                     }
@@ -3513,7 +3560,10 @@ export function updateMessageElement(mes, { messageId = chat.length - 1, message
 
     messageElement.find('.avatar img').attr('src', avatarImg);
     messageElement.find('.ch_name .name_text').text(mes.name);
-    messageElement.find('.timestamp').text(timestamp).attr('title', `${mes.extra?.api ? mes.extra.api + ' - ' : ''}${mes.extra?.model ?? ''}`);
+    messageElement.find('.timestamp').text(timestamp).attr({
+        'data-tt-time': momentDate.isValid() ? momentDate.format('HH:mm') : '',
+        'title': `${mes.extra?.api ? mes.extra.api + ' - ' : ''}${mes.extra?.model ?? ''}`,
+    });
     messageElement.find('.mesIDDisplay').text(`#${messageId}`);
     const root = messageElement[0];
     const author = root.querySelector('.name_text');
@@ -10070,7 +10120,7 @@ export function getCurrentChatDetails() {
  * displayed chats based on a search query.
  * @param {string[]} hightlightNames - An array of chat names to highlight
  */
-export async function displayPastChats(hightlightNames = []) {
+export async function displayPastChats(hightlightNames = [], signal) {
     const chatDetails = getCurrentChatDetails();
     const currentChat = chatDetails.sessionName;
     const groupId = selected_group;
@@ -10078,7 +10128,7 @@ export async function displayPastChats(hightlightNames = []) {
     $('#ChatHistoryCharName').text(`${chatDetails.characterName} `);
 
     const debouncedDisplay = debounce((searchQuery) => {
-        displayChats(searchQuery, currentChat, avatar, groupId, []);
+        displayChats(searchQuery, currentChat, avatar, groupId, [], signal);
     });
 
     // Define the search input listener
@@ -10087,14 +10137,14 @@ export async function displayPastChats(hightlightNames = []) {
         debouncedDisplay(searchQuery);
     });
 
-    await displayChats(String($('#select_chat_search').val()), currentChat, avatar, groupId, hightlightNames);
+    await displayChats(String($('#select_chat_search').val()), currentChat, avatar, groupId, hightlightNames, signal);
     addChatBackupsBrowser();
 }
 
 let chatHistoryOpener;
 
 /** Own the nonmodal history panel's visibility and initial focus. */
-export async function setChatHistoryOpen(open) {
+export async function setChatHistoryOpen(open, { signal } = {}) {
     const panel = document.getElementById('select_chat_popup');
     const shadow = document.getElementById('shadow_select_chat_popup');
     if (open === (shadow.style.display === 'block')) return;
@@ -10105,8 +10155,9 @@ export async function setChatHistoryOpen(open) {
         $('#select_chat_search').val('');
     }
     shadow.style.display = open ? 'block' : 'none';
+    document.dispatchEvent(new CustomEvent('tt-chat-history-state-change', { detail: { open } }));
     if (open) {
-        await displayPastChats();
+        await displayPastChats([], signal);
         if (shadow.style.display === 'block') {
             (isMobileHost() ? panel : document.getElementById('select_chat_search')).focus();
         }
@@ -10115,7 +10166,7 @@ export async function setChatHistoryOpen(open) {
     }
 }
 
-async function displayChats(searchQuery, currentChat, avatar, groupId, highlightNames) {
+async function displayChats(searchQuery, currentChat, avatar, groupId, highlightNames, signal) {
     try {
         const response = await fetch('/api/chats/search', {
             method: 'POST',
@@ -10125,6 +10176,7 @@ async function displayChats(searchQuery, currentChat, avatar, groupId, highlight
                 avatar_url: avatar,
                 group_id: groupId || null,
             }),
+            signal,
         });
 
         if (!response.ok) {
@@ -10132,7 +10184,7 @@ async function displayChats(searchQuery, currentChat, avatar, groupId, highlight
         }
 
         const filteredData = await response.json();
-        if (selected_group !== groupId || (!groupId && characters[this_chid]?.avatar !== avatar)) return;
+        if (signal?.aborted || selected_group !== groupId || (!groupId && characters[this_chid]?.avatar !== avatar)) return;
         filteredData.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
 
         const items = filteredData.map(chat => {
@@ -10147,15 +10199,21 @@ async function displayChats(searchQuery, currentChat, avatar, groupId, highlight
             setAriaRelation(primary, 'describedby', template.find('.select_chat_info')[0]);
             template.find('button:not(.sr-only)').each((_, button) => setAriaRelation(button, 'labelledby', button, name));
             if (isSelected) primary.setAttribute('aria-current', 'true');
-            template.find('.chat_file_size').text(`(${chat.file_size},`);
-            template.find('.chat_messages_num').empty().append(
-                $('<span>', { 'aria-hidden': 'true', text: `${chat.message_count} 💬` }),
-                $('<span>', { class: 'sr-only', text: t`Messages: ${chat.message_count}` }),
-                ')',
-            );
+            template.find('.chat_file_size').text(isMobileHost() ? chat.file_size : `(${chat.file_size},`);
+            const messageCount = template.find('.chat_messages_num').empty();
+            if (isMobileHost()) {
+                messageCount.text(t`Messages: ${chat.message_count}`);
+            } else {
+                messageCount.append(
+                    $('<span>', { 'aria-hidden': 'true', text: `${chat.message_count} 💬` }),
+                    $('<span>', { class: 'sr-only', text: t`Messages: ${chat.message_count}` }),
+                    ')',
+                );
+            }
             template.find('.select_chat_block_mes').text(chat.preview_message);
             template.find('.PastChat_cross').attr('file_name', chat.file_name);
-            template.find('.chat_messages_date').text(timestampToMoment(chat.last_mes).format('lll'));
+            const chatDate = timestampToMoment(chat.last_mes);
+            template.find('.chat_messages_date').text(chatDate.format(isMobileHost() ? 'MM-DD HH:mm' : 'lll')).attr('title', chatDate.format('lll'));
 
             if (isSelected) {
                 template.find('.select_chat_block').attr('highlight', String(true));
@@ -10179,6 +10237,7 @@ async function displayChats(searchQuery, currentChat, avatar, groupId, highlight
             }
         }
     } catch (error) {
+        if (signal?.aborted) return;
         console.error('Error loading chats:', error);
         toastr.error(error.message, t`Chat history could not be loaded.`);
     }
@@ -10197,6 +10256,10 @@ export function selectRightMenuWithAnimation(selectedMenuId) {
         if (selectedMenuId && selectedMenuId.replace('#', '') === menu.id) {
             const mode = displayModes[menu.id] ?? 'block';
             $(menu).css('display', mode);
+            if (isMobileHost()) {
+                $(menu).stop(true, true).css('opacity', 1);
+                return;
+            }
             $(menu).css('opacity', 0.0);
             $(menu).transition({
                 opacity: 1.0,
@@ -10459,11 +10522,11 @@ function select_rm_create({ switchMenu = true } = {}) {
     $('#character_open_media_overrides').hide();
 }
 
-function select_rm_characters() {
-    const doFullRefresh = menu_type === 'characters';
+export async function select_rm_characters({ signal, preservePage = false } = {}) {
+    const doFullRefresh = menu_type === 'characters' && !preservePage;
     setMenuType('characters');
     selectRightMenuWithAnimation('rm_characters_block');
-    printCharacters(doFullRefresh);
+    await printCharacters(doFullRefresh, { signal });
 }
 
 /**
@@ -12787,8 +12850,20 @@ export async function doNavbarIconClick() {
     const panel = getTopLevelDrawerPanel($(this).get(0));
     if (!panel) return;
     const drawerWasOpenAlready = isTopLevelDrawerOpen(panel);
+    if (!drawerWasOpenAlready && isMobileHost()) {
+        const navigation = new CustomEvent('tt-mobile-chat-panel-request', {
+            cancelable: true, detail: { panelId: panel.id },
+        });
+        document.dispatchEvent(navigation);
+        if (navigation.defaultPrevented) return;
+    }
+    await setNavbarDrawerOpen(panel, !drawerWasOpenAlready);
+}
 
-    if (!drawerWasOpenAlready) {
+/** Apply native drawer layout after its navigation owner chooses the page. */
+export async function setNavbarDrawerOpen(panel, open) {
+    if (open === isTopLevelDrawerOpen(panel)) return;
+    if (open) {
         const openDrawers = document.querySelectorAll('.drawer-content.openDrawer:not(.pinnedOpen)');
         for (const openPanel of openDrawers) setTopLevelDrawerOpen(openPanel, false);
         if (openDrawers.length && animation_duration) {
@@ -12929,7 +13004,7 @@ function initCharacterSearch() {
     });
 
     eventSource.on(event_types.APP_READY, () => {
-        const isVisible = accountStorage.getItem(storageKey) === 'true';
+        const isVisible = isMobileHost() || accountStorage.getItem(storageKey) === 'true';
         showSearchForm(isVisible);
     });
 }
@@ -13009,7 +13084,7 @@ jQuery(async function () {
 
     $(document).on('click', '.character_select', async function () {
         const id = Number($(this).attr('data-chid'));
-        await selectCharacterById(id);
+        await selectCharacterById(id, { chatFile: $(this).data('tt-chat-file') });
     });
 
     $(document).on('click', '.bogus_folder_select', function () {
@@ -13299,7 +13374,9 @@ jQuery(async function () {
                 await openPermanentAssistantCard();
             }
             if ((selected_group && !is_group_generating) || (this_chid !== undefined && !is_send_press) || fromSlashCommand) {
-                await setChatHistoryOpen(true);
+                const navigation = new CustomEvent('tt-mobile-chat-history-request', { cancelable: true });
+                document.dispatchEvent(navigation);
+                if (!navigation.defaultPrevented) await setChatHistoryOpen(true);
             }
         } else if (id == 'option_start_new_chat') {
             if ((selected_group || this_chid !== undefined) && !is_send_press) {
@@ -13366,6 +13443,11 @@ jQuery(async function () {
             setMobileImmersiveFullscreenEnabled(nextMode);
             saveSettingsDebounced();
         } else if (id === 'option_settings') {
+            if (isMobileHost()) {
+                const mobileNavigation = new CustomEvent('tt-mobile-chat-more-request', { cancelable: true });
+                document.dispatchEvent(mobileNavigation);
+                if (mobileNavigation.defaultPrevented) return;
+            }
             //var checkBox = document.getElementById("waifuMode");
             var topBar = document.getElementById('top-bar');
             var topSettingsHolder = document.getElementById('top-settings-holder');

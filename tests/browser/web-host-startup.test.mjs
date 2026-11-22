@@ -19,7 +19,7 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
         const { errors, failed } = captureBrowserErrors(window);
         try {
             await startHost();
-            await load('script.js');
+            const main = (await load('script.js')).namespace;
             const { eventSource, event_types } = getModule('scripts/events.js').namespace;
             const ready = new Promise(resolve => eventSource.once(event_types.APP_READY, resolve));
             const extensionsLoaded = new Promise(resolve => eventSource.once(event_types.EXTENSION_SETTINGS_LOADED, resolve));
@@ -28,7 +28,12 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
                 if (characterLore.length) resolve(characterLore);
             }));
             window.jQuery.holdReady(false);
-            const [, lore] = await Promise.race([Promise.all([ready, loreLoaded, settingsSaved, extensionsLoaded]), failed]);
+            await Promise.race([Promise.all([ready, settingsSaved, extensionsLoaded]), failed]);
+            if (identity.kind === 'mobile') {
+                assert.equal(main.this_chid, undefined, 'Mobile opens the conversation list before loading a card');
+                await main.selectCharacterById(0);
+            }
+            const lore = await Promise.race([loreLoaded, failed]);
             assert.match(window.document.querySelector('#chat .mes_text').textContent, /A chat loaded through Web Host/);
             assert.equal(window.document.getElementById('extensions_details').classList.contains('warning'), false);
             assert.equal(window.webHostFixtureActivated, true);

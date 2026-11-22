@@ -413,7 +413,7 @@ function createSettingsActions(backgroundOptions) {
     };
 }
 
-export async function openTauriTavernSettingsPopup() {
+export async function openTauriTavernSettingsPopup({ signal } = {}) {
     ensureSettingsStyle();
 
     const [viewModel, bundle, backgroundModel] = await Promise.all([
@@ -421,6 +421,8 @@ export async function openTauriTavernSettingsPopup() {
         importSettingsBundle(),
         readBackgroundOptions(),
     ]);
+
+    if (signal?.aborted) return;
 
     const mount = document.createElement('div');
     const appHandle = bundle.mountTauriTavernSettingsApp(mount, {

@@ -13,6 +13,7 @@ dist-ssr
 .cache
 *.local
 .playwright-mcp
+/.playwright-cli/
 
 # Editor directories and files
 .vscode/*
@@ -31,6 +32,7 @@ dist-ssr
 FasTools.exe
 
 # Build artifacts
+/output/
 release
 .flatpak-build/
 .flatpak-builder/

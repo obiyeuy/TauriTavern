@@ -21,7 +21,8 @@ android {
     namespace = "com.tauritavern.client"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.tauritavern.client"
+        // Personal builds can coexist with the upstream app and its data.
+        applicationId = System.getenv("TAURITAVERN_ANDROID_APPLICATION_ID") ?: "com.tauritavern.client"
         minSdk = 26
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -58,6 +59,7 @@ android {
             }
         }
         getByName("release") {
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
             isMinifyEnabled = true
             isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")

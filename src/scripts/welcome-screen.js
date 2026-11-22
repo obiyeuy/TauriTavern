@@ -729,13 +729,14 @@ async function openRecentChatsSettingsPopup() {
  * @property {boolean} hidden Chat will be hidden by default
  * @property {boolean} pinned Indicates if the chat is pinned
  */
-async function getRecentChats() {
+export async function getRecentChats({ max, signal } = {}) {
     const settings = getRecentChatsSettings();
     const response = await fetch('/api/chats/recent', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ max: settings.maxDisplayed, pinned: PinnedChatsManager.getAll() }),
+        body: JSON.stringify({ max: max ?? settings.maxDisplayed, pinned: PinnedChatsManager.getAll() }),
         cache: 'no-cache',
+        signal,
     });
 
     if (!response.ok) {

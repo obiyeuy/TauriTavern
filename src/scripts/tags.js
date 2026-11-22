@@ -269,12 +269,12 @@ export const tag_sort_mode = {
  * Tags without `filter_state` (VIEW, HINT, UNFILTER) are action buttons only.
  */
 const ACTIONABLE_TAGS = {
-    FAV: { id: '1', sort_order: 1, name: 'Show only favorites', color: 'rgba(255, 255, 0, 0.5)', filter_state: undefined, action: filterByFav, icon: 'fa-solid fa-star', class: 'filterByFavorites' },
+    FAV: { id: '1', sort_order: 1, name: 'Show only favorites', shortLabel: 'Favorites filter', color: 'rgba(255, 255, 0, 0.5)', filter_state: undefined, action: filterByFav, icon: 'fa-solid fa-star', class: 'filterByFavorites' },
     GROUP: { id: '0', sort_order: 2, name: 'Show only groups', color: 'rgba(100, 100, 100, 0.5)', filter_state: undefined, action: filterByGroups, icon: 'fa-solid fa-users', class: 'filterByGroups' },
     FOLDER: { id: '4', sort_order: 3, name: 'Show only folders', color: 'rgba(120, 120, 120, 0.5)', filter_state: undefined, action: filterByFolder, icon: 'fa-solid fa-folder-plus', class: 'filterByFolder' },
     VIEW: { id: '2', sort_order: 4, name: 'Manage tags', color: 'rgba(150, 100, 100, 0.5)', action: onViewTagsListClick, icon: 'fa-solid fa-gear', class: 'manageTags' },
-    HINT: { id: '3', sort_order: 5, name: 'Show Tag List', color: 'rgba(150, 100, 100, 0.5)', action: onTagListHintClick, icon: 'fa-solid fa-tags', class: 'showTagList' },
-    UNFILTER: { id: '5', sort_order: 6, name: 'Clear all filters', action: onClearAllFiltersClick, icon: 'fa-solid fa-filter-circle-xmark', class: 'clearAllFilters' },
+    HINT: { id: '3', sort_order: 5, name: 'Show Tag List', shortLabel: 'Tags filter', color: 'rgba(150, 100, 100, 0.5)', action: onTagListHintClick, icon: 'fa-solid fa-tags', class: 'showTagList' },
+    UNFILTER: { id: '5', sort_order: 6, name: 'Clear all filters', shortLabel: 'Reset', action: onClearAllFiltersClick, icon: 'fa-solid fa-filter-circle-xmark', class: 'clearAllFilters' },
 };
 
 /**
@@ -326,6 +326,7 @@ const TAG_FOLDER_DEFAULT_TYPE = 'NONE';
  * @typedef {object} Tag - Object representing a tag
  * @property {string} id - The id of the tag (As a kind of has string. This is used whenever the tag is referenced or linked, as the name might change)
  * @property {string} name - The name of the tag
+ * @property {string} [shortLabel] - Optional translation key for compact filter labels.
  * @property {string} [folder_type] - The bogus folder type of this tag (based on `TAG_FOLDER_TYPES`)
  * @property {string} [filter_state] - The saved state of the filter chosen of this tag (based on `FILTER_STATES`)
  * @property {number} [sort_order] - A custom integer representing the sort order if tags are sorted
@@ -1335,6 +1336,7 @@ function appendTagToList(listElement, tag, { removable = false, isFilter = false
         tagElement.find('.tag_name').text('').addClass(tag.icon);
         tagElement.attr('title', `${translate(tag.name)} ${tag.title || ''}`.trim());
         const [label] = tag.name.split('\n');
+        tagElement.attr('data-tt-label', translate(tag.shortLabel || label));
         if (label !== tag.name) tagElement.attr('aria-label', translate(label));
         tagElement.addClass('actionable');
     }
