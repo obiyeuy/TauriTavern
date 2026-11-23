@@ -20,6 +20,12 @@ const paths = {
     moon: '<path d="M20.9 13.1A9 9 0 0 1 10.9 3.1a9 9 0 1 0 10 10Z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
     more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
+    pencil: '<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/>',
+    userPlus: '<circle cx="10" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h4m7 0v6m-3-3h6"/>',
+    import: '<path d="M14 3H6v18h12V7Z"/><path d="M14 3v4h4m-6 3v7m-3-3 3 3 3-3"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18"/>',
+    newChat: '<path d="M20 12V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v15l4-3h4"/><path d="M18 15v6m-3-3h6"/>',
 };
 
 export function mobileChatIcon(name) {

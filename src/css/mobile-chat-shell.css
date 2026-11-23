@@ -4,19 +4,20 @@ body.tt-mobile-chat-shell {
     --tt-bg: #f3f5f8;
     --tt-surface: #fff;
     --tt-field: #f0f3f7;
-    --tt-text: #203242;
-    --tt-muted: #586b7b;
-    --tt-line: #e5ecf0;
+    --tt-text: #222;
+    --tt-muted: #7d858c;
+    --tt-line: #e6e8ea;
     --tt-accent: #2278b8;
     --tt-accent-soft: #e5f2fc;
-    --tt-bar: #4c769b;
+    --tt-bar: #517da2;
     --tt-bar-text: #fff;
-    --tt-wallpaper: #e4eadf;
+    --tt-wallpaper: #dde7d2;
     --tt-incoming: #fff;
-    --tt-outgoing: #e2f3d3;
-    --tt-time: #506458;
+    --tt-outgoing: #effdde;
+    --tt-time: #a1aab3;
+    --tt-time-out: #6cba5d;
     --tt-icon: #6a7d8b;
-    --tt-shadow: 0 1px 2px #203a4b12;
+    --tt-shadow: 0 1px 1px #1023321f;
     --tt-teal: #27776b;
     --tt-teal-soft: #e4f3ec;
     --tt-violet: #7452a8;
@@ -56,26 +57,28 @@ body.tt-mobile-chat-shell {
     -webkit-tap-highlight-color: transparent;
 }
 body.tt-mobile-chat-shell[data-tt-color-scheme="night"] {
-    --tt-bg: #101b26;
-    --tt-surface: #172633;
-    --tt-field: #223340;
-    --tt-text: #edf4f9;
-    --tt-muted: #a0b4c5;
-    --tt-line: #2c3d4a;
-    --tt-accent: #79c1f5;
-    --tt-accent-soft: #243e54;
-    --tt-bar: #172633;
-    --tt-wallpaper: #101e29;
-    --tt-incoming: #203441;
-    --tt-outgoing: #315b7b;
-    --tt-time: #c1d2de;
-    --tt-icon: #adc2d2;
+    /* Telegram "Night" palette. */
+    --tt-bg: #0e1621;
+    --tt-surface: #1d2733;
+    --tt-field: #242f3d;
+    --tt-text: #f5f7fa;
+    --tt-muted: #8b9cad;
+    --tt-line: #10171f;
+    --tt-accent: #6ab2f2;
+    --tt-accent-soft: #2b3e52;
+    --tt-bar: #212d3b;
+    --tt-wallpaper: #0e1621;
+    --tt-incoming: #182533;
+    --tt-outgoing: #2b5278;
+    --tt-time: #6d8396;
+    --tt-time-out: #7da8d3;
+    --tt-icon: #7f91a4;
     --tt-shadow: 0 1px 2px #0003;
     --tt-teal: #8dcbbd;
     --tt-teal-soft: #203b38;
     --tt-violet: #c4aceb;
     --tt-violet-soft: #343047;
-    --tt-primary: #467fa8;
+    --tt-primary: #5288c1;
     --tt-danger: #f2a1ac;
     --tt-danger-fill: #a63e49;
     color-scheme: dark;
@@ -93,7 +96,8 @@ body.tt-mobile-chat-shell :is(#tt-chat-header, #tt-chat-tabs, #tt-more-panel, #t
 body.tt-mobile-chat-shell :is(input, textarea, select, [role="button"]):focus-visible {
     outline: 2px solid var(--tt-accent); outline-offset: -3px;
 }
-body.tt-mobile-chat-shell :is(#tt-chat-header, #tt-chat-tabs, #tt-more-panel, #rightSendForm) [hidden] {
+body.tt-mobile-chat-shell :is(#tt-chat-header, #tt-chat-tabs, #tt-more-panel, #tt-settings-page, #rightSendForm) [hidden],
+body.tt-mobile-chat-shell #tt-settings-page[hidden] {
     display: none !important;
 }
 /* Keep the native wallpaper pipeline alive. The chat surface adds a light
@@ -133,6 +137,8 @@ body.tt-mobile-chat-shell #tt-chat-header {
     color: var(--tt-bar-text); background: var(--tt-bar);
     box-shadow: 0 1px 3px #18304422;
 }
+/* On the list the folder tabs continue the app bar, so only the tabs cast a shadow. */
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #tt-chat-header { box-shadow: none; }
 body.tt-mobile-chat-shell #tt-chat-header > button {
     display: grid; place-items: center; flex: 0 0 48px; width: 48px; height: 48px; padding: 0;
     color: var(--tt-bar-text); background: transparent; border-radius: 50%;
@@ -140,22 +146,28 @@ body.tt-mobile-chat-shell #tt-chat-header > button {
 body.tt-mobile-chat-shell #tt-chat-header > button:hover { background: #ffffff17; }
 body.tt-mobile-chat-shell #tt-chat-header > button:active { background: #ffffff28; transform: scale(.94); }
 body.tt-mobile-chat-shell #tt-chat-header button:focus-visible { outline-color: #fff; }
-body.tt-mobile-chat-shell #tt-chat-header #tt-chat-search { display: none; }
-body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #tt-chat-header #tt-chat-search { display: grid; }
 body.tt-mobile-chat-shell #tt-chat-avatar {
-    flex: 0 0 40px; width: 40px; height: 40px; margin-inline: 4px 8px;
+    flex: 0 0 42px; width: 42px; height: 42px; margin-inline: 2px 10px;
     display: grid; place-items: center; overflow: hidden; border-radius: 50%;
     color: #fff; background: #74b1c3 center/cover; font-size: 20px; font-weight: 500;
 }
 body.tt-mobile-chat-shell .tt-chat-heading { flex: 1; min-width: 0; }
 body.tt-mobile-chat-shell .tt-chat-heading h1 {
-    margin: 0; overflow: hidden; color: inherit; font-size: 17px; line-height: 24px;
-    font-weight: 600; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .1px;
+    margin: 0; overflow: hidden; color: inherit; font-size: 18px; line-height: 24px;
+    font-weight: 500; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .1px;
 }
 body.tt-mobile-chat-shell .tt-chat-heading > span {
-    display: block; overflow: hidden; color: #fff; font-size: 12px; line-height: 18px;
+    display: block; overflow: hidden; color: #ffffffb8; font-size: 13.5px; line-height: 18px;
     text-overflow: ellipsis; white-space: nowrap;
 }
+body.tt-mobile-chat-shell .tt-chat-heading > span:empty { display: none; }
+body.tt-mobile-chat-shell #tt-chat-search-input {
+    flex: 1; min-width: 0; height: 48px; margin: 0 0 0 8px; padding: 0; border: 0; border-radius: 0;
+    color: var(--tt-bar-text); background: transparent; box-shadow: none; outline: none;
+    font: inherit; font-size: 18px; caret-color: var(--tt-bar-text);
+}
+body.tt-mobile-chat-shell #tt-chat-search-input::placeholder { color: #ffffff99; opacity: 1; }
+body.tt-mobile-chat-shell #tt-chat-search-input::-webkit-search-cancel-button { display: none; }
 body.tt-mobile-chat-shell #tt-chat-feedback {
     position: absolute; top: calc(100% + 8px); left: 12px; right: 12px;
     display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 12px;
@@ -185,68 +197,65 @@ body.tt-mobile-chat-shell #tt-chat-nav-scrim {
 body.tt-mobile-chat-shell #tt-chat-nav-scrim[hidden] { display: none; }
 body.tt-mobile-chat-shell #tt-chat-action-scrim {
     position: fixed; z-index: 3025; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0;
-    border: 0; background: #071b3348; opacity: 1; transition: opacity 160ms ease;
+    border: 0; background: transparent; opacity: 1; transition: opacity 160ms ease;
 }
 body.tt-mobile-chat-shell #tt-chat-action-scrim[hidden] { display: none; }
 body.tt-mobile-chat-shell #tt-chat-actions {
-    position: fixed; z-index: 3030; top: var(--tt-shell-header-height); right: 8px; width: min(280px, calc(100vw - 24px));
-    display: grid; gap: 4px; padding: 8px; color: var(--tt-text); background: var(--tt-surface);
-    border: 1px solid var(--tt-line); border-radius: 16px; box-shadow: 0 10px 32px #12283b35;
+    /* Telegram popup menus drop from the corner that opened them. */
+    position: fixed; z-index: 3030; top: calc(6px + var(--tt-inset-top, 0px)); right: max(6px, var(--tt-inset-right, 0px));
+    width: min(256px, calc(100vw - 24px));
+    display: grid; gap: 0; padding: 6px 0; color: var(--tt-text); background: var(--tt-surface);
+    border: 0; border-radius: 10px; box-shadow: 0 2px 6px #0e1e2c1f, 0 8px 24px #0e1e2c2e;
     max-height: calc(var(--tt-shell-content-height) - 12px); overflow-y: auto; overscroll-behavior: contain;
     transform-origin: top right; animation: tt-action-menu-in 170ms var(--tt-ease);
 }
+body.tt-mobile-chat-shell #tt-chat-actions[data-tt-anchor="fab"] {
+    top: auto; right: max(16px, var(--tt-inset-right, 0px));
+    bottom: calc(84px + var(--tt-viewport-bottom-inset, 0px)); transform-origin: bottom right;
+}
 body.tt-mobile-chat-shell #tt-chat-actions[hidden] { display: none; }
 body.tt-mobile-chat-shell #tt-chat-actions button {
-    display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 10px 12px; text-align: left;
-    border-radius: 10px; background: transparent;
+    display: flex; align-items: center; gap: 22px; min-height: 48px; padding: 0 20px; text-align: left;
+    border-radius: 0; background: transparent; font-size: 15px;
 }
 body.tt-mobile-chat-shell #tt-chat-actions button:hover { background: var(--tt-field); }
 body.tt-mobile-chat-shell #tt-chat-actions button:active { background: var(--tt-accent-soft); transform: scale(.98); }
 body.tt-mobile-chat-shell #tt-chat-actions button svg { color: var(--tt-icon); }
 body.tt-mobile-chat-shell #tt-nav-profile {
     position: relative; flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-start;
-    min-height: 176px; padding: calc(24px + var(--tt-inset-top, 0px)) 24px 20px;
-    color: #fff; background: linear-gradient(135deg, #4c769b, #3f6689);
+    min-height: 148px; padding: calc(20px + var(--tt-inset-top, 0px)) 20px 16px;
+    color: #fff; background: var(--tt-bar);
 }
 body.tt-mobile-chat-shell #tt-nav-profile-avatar {
-    display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 12px;
+    display: grid; place-items: center; width: 64px; height: 64px; margin-bottom: 14px;
     border-radius: 50%; background: #c5e4f2; color: #2b668f; font-size: 27px; font-weight: 500;
 }
-body.tt-mobile-chat-shell #tt-nav-profile strong { font-size: 18px; line-height: 24px; font-weight: 600; }
-body.tt-mobile-chat-shell #tt-nav-profile small { margin-top: 4px; color: #fff; font-size: 13px; line-height: 20px; }
+body.tt-mobile-chat-shell #tt-nav-profile strong { font-size: 15px; line-height: 20px; font-weight: 600; }
+body.tt-mobile-chat-shell #tt-nav-profile small { margin-top: 2px; color: #ffffffcc; font-size: 13px; line-height: 18px; }
 body.tt-mobile-chat-shell #tt-nav-profile #tt-nav-theme {
     position: absolute; right: 12px; top: calc(16px + var(--tt-inset-top, 0px));
     display: grid; place-items: center; width: 48px; height: 48px; padding: 0;
-    background: #ffffff12; border-radius: 50%;
+    background: transparent; border-radius: 50%;
 }
 body.tt-mobile-chat-shell #tt-nav-profile #tt-nav-theme:hover { background: #ffffff28; }
-body.tt-mobile-chat-shell #tt-nav-search {
-    display: flex; align-items: center; gap: 10px; min-height: 48px; margin: 16px 16px 8px;
-    padding: 0 14px; color: var(--tt-muted); background: var(--tt-field); border-radius: 24px;
-}
-body.tt-mobile-chat-shell #tt-nav-search svg { flex: 0 0 20px; width: 20px; height: 20px; }
-body.tt-mobile-chat-shell #tt-nav-search input {
-    width: 100%; min-width: 0; height: 48px; margin: 0; padding: 0; border: 0;
-    box-shadow: none; border-radius: 0; color: var(--tt-text); background: transparent; font: inherit; font-size: 14px;
-}
-body.tt-mobile-chat-shell #tt-nav-search input::placeholder { color: var(--tt-muted); opacity: 1; }
-body.tt-mobile-chat-shell .tt-nav-routes { padding: 4px 8px 16px; border-bottom: 1px solid var(--tt-line); }
+/* Telegram drawer rows: flush, 48px, grey glyphs and a wide icon column. */
+body.tt-mobile-chat-shell .tt-nav-routes { padding: 8px 0; border-bottom: 1px solid var(--tt-line); }
 body.tt-mobile-chat-shell .tt-nav-routes button {
-    display: flex; align-items: center; gap: 20px; width: 100%; min-height: 52px;
-    padding: 10px 20px; border-radius: 12px; background: transparent; text-align: left; font-size: 15px; font-weight: 500;
+    display: flex; align-items: center; gap: 30px; width: 100%; min-height: 48px;
+    padding: 0 22px; border-radius: 0; background: transparent; text-align: left; font-size: 15px; font-weight: 500;
 }
 body.tt-mobile-chat-shell .tt-nav-routes button svg { color: var(--tt-icon); }
 body.tt-mobile-chat-shell .tt-nav-routes button:disabled { opacity: .45; cursor: default; }
 body.tt-mobile-chat-shell .tt-nav-routes button:hover,
 body.tt-mobile-chat-shell #tt-nav-chat:hover { background: var(--tt-field); }
-body.tt-mobile-chat-shell .tt-nav-routes button[aria-current="page"] { color: var(--tt-accent); background: var(--tt-accent-soft); }
+body.tt-mobile-chat-shell .tt-nav-routes button[aria-current="page"] { color: var(--tt-accent); background: transparent; }
 body.tt-mobile-chat-shell .tt-nav-routes button[aria-current="page"] svg { color: inherit; }
 body.tt-mobile-chat-shell .tt-nav-section-title {
-    margin: 20px 24px 8px; color: var(--tt-accent); font-size: 12px; font-weight: 600; letter-spacing: .5px;
+    margin: 16px 22px 4px; color: var(--tt-accent); font-size: 14px; font-weight: 500;
 }
 body.tt-mobile-chat-shell #tt-nav-chat {
-    display: flex; align-items: center; gap: 12px; min-height: 80px; width: calc(100% - 16px);
-    margin: 0 8px; padding: 12px 16px; border-radius: 10px; background: transparent; text-align: left;
+    display: flex; align-items: center; gap: 14px; min-height: 64px; width: 100%;
+    margin: 0; padding: 8px 22px; border-radius: 0; background: transparent; text-align: left;
 }
 body.tt-mobile-chat-shell .tt-nav-chat-avatar {
     flex: 0 0 48px; display: grid; place-items: center; width: 48px; height: 48px;
@@ -256,7 +265,6 @@ body.tt-mobile-chat-shell #tt-nav-chat > span:last-child { flex: 1; min-width: 0
 body.tt-mobile-chat-shell #tt-nav-chat :is(strong, small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.tt-mobile-chat-shell #tt-nav-chat strong { font-size: 15px; font-weight: 600; }
 body.tt-mobile-chat-shell #tt-nav-chat small { margin-top: 5px; color: var(--tt-muted); font-size: 12px; font-weight: 400; }
-body.tt-mobile-chat-shell .tt-nav-footer { margin: auto 24px 0; padding-top: 36px; padding-bottom: 24px; color: var(--tt-muted); font-size: 12px; line-height: 20px; }
 
 /* Chat and bubbles. Keep native editing and swipe actions available on focus. */
 body.tt-mobile-chat-shell #sheld {
@@ -270,7 +278,7 @@ body.tt-mobile-chat-shell #sheld {
 }
 body.tt-mobile-chat-shell[data-tt-chat-view]:not([data-tt-chat-view="chat"]) #sheld { visibility: hidden; }
 body.tt-mobile-chat-shell #chat {
-    flex: 1; min-height: 0; gap: 8px; padding: 18px 12px 14px;
+    flex: 1; min-height: 0; gap: 6px; padding: 10px 6px 8px;
     background: transparent !important; border: 0; border-radius: 0; box-shadow: none;
 }
 body.tt-mobile-chat-shell #chat .mes {
@@ -285,12 +293,33 @@ body.tt-mobile-chat-shell #chat .swipe_left { left: 8px; }
 body.tt-mobile-chat-shell #chat .swipeRightBlock { right: 8px; }
 body.tt-mobile-chat-shell #chat .mes_block {
     position: relative; flex: 0 1 auto; width: fit-content; min-width: 112px; max-width: min(88%, 680px);
-    margin: 0 auto 0 0; padding: 10px 13px 23px; color: var(--tt-text);
-    background: var(--tt-incoming); border: 0; border-radius: 16px 16px 16px 5px; box-shadow: var(--tt-shadow);
+    margin: 0 auto 0 8px; padding: 6px 10px 6px; color: var(--tt-text); overflow: visible;
+    background: var(--tt-incoming); border: 0; border-radius: 16px; box-shadow: var(--tt-shadow);
 }
 body.tt-mobile-chat-shell #chat .mes[is_user="true"] .mes_block {
-    margin: 0 0 0 auto; background: var(--tt-outgoing); border-radius: 16px 16px 5px 16px;
+    margin: 0 8px 0 auto; background: var(--tt-outgoing); border-radius: 16px;
 }
+/* Telegram gives the last bubble of each run a tail on its own side. */
+body.tt-mobile-chat-shell #chat .mes_block::before {
+    content: ""; position: absolute; bottom: 0; left: -7px; display: none; width: 8px; height: 14px;
+    background: var(--tt-incoming); mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 14'%3E%3Cpath d='M8 0C8 7 5 12 0 14h8z'/%3E%3C/svg%3E") center/100% 100% no-repeat;
+}
+body.tt-mobile-chat-shell #chat .mes[is_user="true"] .mes_block::before {
+    left: auto; right: -7px; background: var(--tt-outgoing); transform: scaleX(-1);
+}
+body.tt-mobile-chat-shell #chat .mes:not([is_user="true"], .smallSysMes):not(:has(+ .mes:not([is_user="true"]))) .mes_block { border-bottom-left-radius: 0; }
+body.tt-mobile-chat-shell #chat .mes[is_user="true"]:not(.smallSysMes):not(:has(+ .mes[is_user="true"])) .mes_block { border-bottom-right-radius: 0; }
+body.tt-mobile-chat-shell #chat .mes:not([is_user="true"], .smallSysMes):not(:has(+ .mes:not([is_user="true"]))) .mes_block::before,
+body.tt-mobile-chat-shell #chat .mes[is_user="true"]:not(.smallSysMes):not(:has(+ .mes[is_user="true"])) .mes_block::before { display: block; }
+/* Telegram tucks the time into the last text line: reserve room after the
+ * final paragraph, and fall back to a bottom gutter for other content. */
+body.tt-mobile-chat-shell #chat .mes_text > p:last-child::after {
+    content: ""; display: inline-block; width: 46px; height: 1px;
+}
+body.tt-mobile-chat-shell #chat .mes_text:not(:has(> p:last-child)) { padding-bottom: 16px; }
+/* One-to-one chats already name the character in the app bar. */
+body.tt-mobile-chat-shell[data-tt-group-chat="false"] #chat .mes:not([is_user="true"]) .name_text { display: none; }
+body.tt-mobile-chat-shell[data-tt-group-chat="false"] #chat .mes:not([is_user="true"]) .ch_name { min-height: 0; margin: 0; }
 body.tt-mobile-chat-shell #chat .ch_name {
     display: flex; align-items: center; min-height: 18px; gap: 8px; margin: 0 0 4px;
     color: var(--tt-accent); font-size: 12px; line-height: 18px; font-weight: 600;
@@ -298,16 +327,17 @@ body.tt-mobile-chat-shell #chat .ch_name {
 body.tt-mobile-chat-shell #chat .mes_header_info > .flex-container { align-items: center; flex: 1; gap: 8px; }
 body.tt-mobile-chat-shell #chat .name_text { font-weight: 600; }
 body.tt-mobile-chat-shell #chat .timestamp {
-    position: absolute; right: 13px; bottom: 6px; margin: 0; color: var(--tt-time); opacity: 1; font-size: 0; font-weight: 400; line-height: 16px; font-variant-numeric: tabular-nums;
+    position: absolute; right: 11px; bottom: 5px; margin: 0; color: var(--tt-time); opacity: 1; font-size: 0; font-weight: 400; line-height: 16px; font-variant-numeric: tabular-nums;
 }
 body.tt-mobile-chat-shell #chat .timestamp::after { content: attr(data-tt-time) / ""; font-size: 11px; }
+body.tt-mobile-chat-shell #chat .mes[is_user="true"] .timestamp { color: var(--tt-time-out); }
 body.tt-mobile-chat-shell #chat .mes[is_user="true"] .name_text { display: none; }
 body.tt-mobile-chat-shell #chat .mes[is_user="true"] .ch_name { min-height: 0; margin: 0; }
 body.tt-mobile-chat-shell #chat .mes_text {
-    padding: 0; color: var(--tt-text); font-size: max(16px, var(--mainFontSize)); line-height: 1.55;
+    padding: 0; color: var(--tt-text); font-size: max(16px, var(--mainFontSize)); line-height: 1.42;
     font-weight: 400; overflow-wrap: anywhere; text-align: start;
 }
-body.tt-mobile-chat-shell #chat .mes_text p { margin: 0 0 8px; font-weight: inherit; }
+body.tt-mobile-chat-shell #chat .mes_text p { margin: 0 0 6px; font-weight: inherit; }
 body.tt-mobile-chat-shell #chat .mes_text p:last-child { margin-bottom: 0; }
 body.tt-mobile-chat-shell #chat .mes_text em { color: var(--tt-muted); }
 body.tt-mobile-chat-shell #chat .mes_text q { color: var(--tt-accent); }
@@ -347,10 +377,10 @@ body.tt-mobile-chat-shell #chat .mes_generation_info { display: none; }
 body.tt-mobile-chat-shell #chat .mes.selected .mes_block { outline: 2px solid var(--tt-accent); }
 body.tt-mobile-chat-shell #chat .smallSysMes .mes_block { margin-inline: auto; color: var(--tt-muted); background: var(--tt-field); }
 
-/* Composer: compact message field plus a separate round primary action. */
+/* Composer: Telegram's full-width bottom bar with an icon send action. */
 body.tt-mobile-chat-shell #form_sheld {
-    flex: 0 0 auto; width: 100%; margin: 0; padding: 6px max(8px, var(--tt-inset-right, 0px)) calc(8px + var(--tt-viewport-bottom-inset, 0px)) max(8px, var(--tt-inset-left, 0px));
-    background: transparent;
+    flex: 0 0 auto; width: 100%; margin: 0; padding: 2px max(4px, var(--tt-inset-right, 0px)) calc(2px + var(--tt-viewport-bottom-inset, 0px)) max(4px, var(--tt-inset-left, 0px));
+    background: var(--tt-surface); box-shadow: 0 -1px 2px #10233214;
 }
 body.tt-mobile-chat-shell #send_form {
     width: 100%; max-width: 900px; min-height: 52px; margin: 0 auto; padding: 0; border: 0;
@@ -361,12 +391,11 @@ body.tt-mobile-chat-shell #nonQRFormItems {
     width: 100%; min-height: 52px; background: transparent; border-radius: 26px; box-shadow: none;
 }
 body.tt-mobile-chat-shell #nonQRFormItems::before {
-    content: ""; position: absolute; inset: 0 calc(var(--tt-compose-action) + var(--tt-compose-gap)) 0 0; border-radius: 26px;
-    background: var(--tt-surface); border: 1px solid var(--tt-line); box-shadow: var(--tt-shadow); pointer-events: none;
+    content: none;
 }
 body.tt-mobile-chat-shell #leftSendForm {
-    flex: 0 0 auto; display: flex; flex-flow: row nowrap; align-items: center; align-self: flex-end;
-    position: relative; width: auto; height: 52px; padding: 2px 0 2px 4px; gap: 0; order: 1; background: transparent;
+    /* Its buttons join the bar so the clip can sit beside send, as in Telegram. */
+    display: contents;
 }
 body.tt-mobile-chat-shell #send_textarea {
     flex: 1; order: 2; width: 0; min-width: 0; min-height: 52px; max-height: 180px;
@@ -377,18 +406,20 @@ body.tt-mobile-chat-shell #send_textarea {
 body.tt-mobile-chat-shell #send_textarea::placeholder { color: var(--tt-muted); opacity: 1; font-weight: 400; text-align: left; }
 body.tt-mobile-chat-shell #rightSendForm {
     flex: 0 0 auto; display: flex; flex-flow: row nowrap; align-items: center; align-self: flex-end;
-    width: auto; min-height: 52px; margin-left: var(--tt-compose-gap); padding: 0; gap: 4px; order: 3;
+    width: auto; min-height: 52px; margin-left: var(--tt-compose-gap); padding: 0; gap: 4px; order: 4;
+    margin-left: 0;
     background: transparent;
 }
 body.tt-mobile-chat-shell #rightSendForm > :is(#send_but, #mes_stop, #tt-compose-connect) {
     flex: 0 0 var(--tt-compose-action); width: var(--tt-compose-action); height: var(--tt-compose-action); min-width: var(--tt-compose-action); min-height: var(--tt-compose-action); margin: 0; padding: 0;
     align-items: center; justify-content: center; border: 0; border-radius: 50%;
-    color: #fff; background: var(--tt-primary); box-shadow: 0 2px 4px #173e5b1c; opacity: 1; font-size: 22px;
+    color: var(--tt-accent); background: transparent; box-shadow: none; opacity: 1; font-size: 22px;
     transition: filter 140ms ease, background-color 140ms ease;
 }
 body.tt-mobile-chat-shell #tt-compose-connect { display: grid; place-items: center; cursor: pointer; }
 body.tt-mobile-chat-shell #tt-compose-connect svg { width: 24px; height: 24px; }
-body.tt-mobile-chat-shell #rightSendForm > #mes_stop { background: var(--tt-danger-fill); }
+body.tt-mobile-chat-shell #rightSendForm > #mes_stop { color: var(--tt-danger); }
+body.tt-mobile-chat-shell #rightSendForm > :is(#send_but, #mes_stop, #tt-compose-connect):active { background: var(--tt-field); }
 body.tt-mobile-chat-shell #rightSendForm > :is(#send_but, #mes_stop, #tt-compose-connect):hover { filter: brightness(1.08); }
 body.tt-mobile-chat-shell #rightSendForm > :is(#send_but, #mes_stop, #tt-compose-connect):active { filter: brightness(.9); }
 body.tt-mobile-chat-shell #leftSendForm > :is(#options_button, #extensionsMenuButton) {
@@ -397,12 +428,15 @@ body.tt-mobile-chat-shell #leftSendForm > :is(#options_button, #extensionsMenuBu
 }
 body.tt-mobile-chat-shell #options_button::before {
     content: ""; width: 22px; height: 22px; display: block; background: currentColor;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 5v14M5 12h14' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 7h16M4 12h16M4 17h10' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;
 }
 body.tt-mobile-chat-shell #leftSendForm > :is(#options_button, #extensionsMenuButton):is(:hover, :active) { background: var(--tt-field); }
+body.tt-mobile-chat-shell #leftSendForm > :is(#options_button, #extensionsMenuButton) { align-self: flex-end; margin-bottom: 2px; }
+body.tt-mobile-chat-shell #leftSendForm > #options_button { order: 1; margin-left: 2px; }
+body.tt-mobile-chat-shell #leftSendForm > #extensionsMenuButton { order: 3; }
 body.tt-mobile-chat-shell #extensionsMenuButton::before {
     content: ""; width: 22px; height: 22px; display: block; background: currentColor;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='black' stroke-width='1.7'%3E%3Crect x='3.5' y='3.5' width='6' height='6' rx='1.5'/%3E%3Crect x='14.5' y='3.5' width='6' height='6' rx='1.5'/%3E%3Crect x='3.5' y='14.5' width='6' height='6' rx='1.5'/%3E%3Crect x='14.5' y='14.5' width='6' height='6' rx='1.5'/%3E%3C/g%3E%3C/svg%3E") center/contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m20.5 11.2-8.3 8.3a5.3 5.3 0 0 1-7.5-7.5l8.3-8.3a3.6 3.6 0 0 1 5 5.1l-8.3 8.3a1.8 1.8 0 0 1-2.5-2.5l7.6-7.6' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;
 }
 body.tt-mobile-chat-shell :is(#mes_continue, #mes_impersonate) { display: none !important; }
 body.tt-mobile-chat-shell #quick-reply-container { border-radius: 14px 14px 0 0; background: var(--tt-surface); }
@@ -412,7 +446,7 @@ body.tt-mobile-chat-shell #file_form { color: var(--tt-text); background: var(--
 body.tt-mobile-chat-shell[data-tt-chat-view="roles"] :is(#CharListButtonAndHotSwaps, #rm_PinAndTabs, #rm_button_create, #external_import_button, #rm_button_group_chats, #rm_buttons_container, #charListGridToggle, #bulkEditButton, #rm_button_search) { display: none !important; }
 body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #top-settings-holder #right-nav-panel { padding: 0; background: var(--tt-surface); }
 body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #tt-chat-subtitle { display: none; }
-body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .tt-chat-heading h1 { font-size: 21px; font-weight: 600; line-height: 28px; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .tt-chat-heading h1 { font-size: 20px; font-weight: 500; line-height: 28px; }
 body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #top-settings-holder #right-nav-panel,
 body.tt-mobile-chat-shell[data-tt-chat-view="history"] #shadow_select_chat_popup,
 body.tt-mobile-chat-shell[data-tt-chat-view="more"] #tt-more-panel,
@@ -430,10 +464,36 @@ body.tt-mobile-chat-shell #charListFixedTop {
     flex-shrink: 0; padding: 12px 12px 4px; background: var(--tt-surface);
 }
 body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #charListFixedTop {
-    display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 4px;
+    padding: 0 4px; border-bottom: 0; color: #fff; background: var(--tt-bar);
+    box-shadow: 0 1px 3px #18304422; position: relative; z-index: 1;
 }
 body.tt-mobile-chat-shell #rm_button_bar { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; }
-body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #rm_button_bar { grid-column: 2; grid-row: 1; padding: 0; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #rm_button_bar { grid-column: 2; grid-row: 2; align-self: start; padding: 0; }
+/* Telegram list chrome: search lives behind the app-bar icon, filters read as
+ * folder tabs, and the primary "new" action floats bottom-right. */
+/* The query is typed in the app bar and mirrored into the native field,
+ * which stays mounted but hidden. Filters and sort appear only while
+ * searching or while one of them is in effect: Telegram has no list toolbar. */
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #form_character_search_form { display: none !important; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"][data-tt-roles-search="false"] #charListFixedTop:not(:has(.rm_tag_controls .tag:is([data-toggle-state="SELECTED"], [data-toggle-state="EXCLUDED"], [aria-expanded="true"]), .rm_tag_controls .showTagList.indicator)) { display: none; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"][data-tt-roles-search="false"] #tt-chat-header { box-shadow: 0 1px 3px #18304422; }
+/* Create and import are reached from the pencil action's menu; the native
+ * buttons stay mounted and are clicked by it. */
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #character_import_button { display: none !important; }
+body.tt-mobile-chat-shell #tt-roles-fab {
+    position: fixed; z-index: 3005; right: max(16px, var(--tt-inset-right, 0px));
+    bottom: calc(16px + var(--tt-viewport-bottom-inset, 0px));
+    display: grid; place-items: center; width: 56px; height: 56px; margin: 0; padding: 0;
+    border: 0; border-radius: 50%; color: #fff; background: var(--tt-primary); cursor: pointer;
+    box-shadow: 0 2px 4px #173e5b2e, 0 6px 16px #173e5b29; touch-action: manipulation;
+    transition: transform 160ms var(--tt-ease), filter 140ms ease, bottom 160ms var(--tt-ease);
+}
+body.tt-mobile-chat-shell #tt-roles-fab svg { width: 24px; height: 24px; }
+body.tt-mobile-chat-shell #tt-roles-fab[hidden] { display: none; }
+body.tt-mobile-chat-shell #tt-roles-fab:active { transform: scale(.94); filter: brightness(.92); }
+body.tt-mobile-chat-shell #tt-roles-fab:focus-visible { outline: 2px solid var(--tt-accent); outline-offset: 3px; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #rm_print_characters_block { padding-bottom: 88px; }
 body.tt-mobile-chat-shell #character_import_button {
     flex: 0 0 48px; min-width: 48px; height: 48px; min-height: 48px; margin: 0;
     align-content: center; text-align: center; color: var(--tt-accent); background: transparent;
@@ -448,16 +508,34 @@ body.tt-mobile-chat-shell #character_sort_order {
     background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236a7d8b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") right 8px center/16px no-repeat;
     border: 0; border-radius: 24px; font-family: inherit; font-size: 13px;
 }
-body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #character_sort_order { flex: 0 1 auto; width: 92px; min-width: 92px; max-width: 120px; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #character_sort_order {
+    flex: 0 1 auto; width: 92px; min-width: 92px; max-width: 120px;
+    height: 44px; min-height: 44px; margin: 0; color: #ffffffcc; border-radius: 0;
+    background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") right 8px center/16px no-repeat;
+}
+body.tt-mobile-chat-shell #character_sort_order option { color: var(--tt-text); background: var(--tt-surface); }
 body.tt-mobile-chat-shell #form_character_search_form { display: flex !important; height: auto !important; }
-body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #form_character_search_form { grid-column: 1; grid-row: 1; min-width: 0; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #form_character_search_form { grid-column: 1 / -1; grid-row: 1; min-width: 0; padding: 4px 4px 2px; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #character_search_bar { min-height: 40px; background-color: var(--tt-surface); }
 body.tt-mobile-chat-shell #character_search_bar {
     width: 100%; min-width: 0; min-height: 48px; margin: 0; padding: 10px 14px 10px 38px;
     border: 0; border-radius: 24px; color: var(--tt-text); font-size: 16px;
     background: var(--tt-field) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236a7d8b' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='7'/%3E%3Cpath d='m16 16 5 5'/%3E%3C/svg%3E") 13px center/18px no-repeat;
 }
 body.tt-mobile-chat-shell .rm_tag_controls { margin: 8px 0 0; }
-body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls { grid-column: 1/-1; min-width: 0; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls { grid-column: 1; grid-row: 2; min-width: 0; margin: 0; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls > .tags { padding: 0; gap: 0; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls > .tags:empty { display: none; }
+/* Filters are Telegram folder tabs: white text on the bar, a white indicator for the active one. */
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls .tag {
+    height: 44px; min-height: 44px; min-width: 0; padding: 0 14px; border-radius: 0;
+    background: transparent !important; color: #ffffffb3 !important; font-weight: 500;
+}
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls .tag:is(:hover, :active) { color: #fff !important; background: #ffffff14 !important; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls .tag.actionable::before { display: none; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] .rm_tag_controls .tag:is([data-toggle-state="SELECTED"], [aria-expanded="true"]) {
+    color: #fff !important; background: transparent !important; box-shadow: inset 0 -3px 0 #fff;
+}
 body.tt-mobile-chat-shell .rm_tag_controls > .tags {
     display: flex; flex-flow: row nowrap; gap: 8px; overflow-x: auto; max-width: 100%;
     padding: 2px 0 8px; scrollbar-width: none;
@@ -482,25 +560,25 @@ body.tt-mobile-chat-shell .rm_tag_controls .tag:is([data-toggle-state="SELECTED"
     color: var(--tt-accent) !important; background: var(--tt-accent-soft) !important;
 }
 body.tt-mobile-chat-shell .rm_tag_controls .tag[data-toggle-state="EXCLUDED"] { text-decoration: line-through; color: var(--tt-danger) !important; filter: none !important; }
-body.tt-mobile-chat-shell #rm_print_characters_block { order: 2; min-height: 0; gap: 0; padding: 0 8px; }
+body.tt-mobile-chat-shell #rm_print_characters_block { order: 2; min-height: 0; gap: 0; padding: 0; }
 body.tt-mobile-chat-shell #rm_print_characters_block :is(.character_select, .group_select) {
-    display: flex; position: relative; flex-direction: row; align-items: center; gap: 14px;
-    min-height: 80px; margin: 0; padding: 12px 8px; border: 0; border-radius: 8px;
+    display: flex; position: relative; flex-direction: row; align-items: center; gap: 12px;
+    min-height: 72px; margin: 0; padding: 8px 12px 8px 10px; border: 0; border-radius: 0;
     transition: background-color 140ms ease, transform 180ms cubic-bezier(.2,.8,.2,1);
     color: var(--tt-text); background: transparent;
 }
 body.tt-mobile-chat-shell #rm_print_characters_block .character_select::after {
-    content: ""; position: absolute; bottom: 0; left: 74px; right: 16px; height: 1px; background: var(--tt-line);
+    content: ""; position: absolute; bottom: 0; left: 76px; right: 0; height: 1px; background: var(--tt-line);
 }
 body.tt-mobile-chat-shell #rm_print_characters_block .character_select:last-child::after { display: none; }
 body.tt-mobile-chat-shell #rm_print_characters_block :is(.character_select, .group_select):hover { background: var(--tt-field); }
 body.tt-mobile-chat-shell #rm_print_characters_block :is(.character_select, .group_select):active { background: var(--tt-accent-soft); transform: scale(.985); }
 body.tt-mobile-chat-shell #rm_print_characters_block .avatar {
-    flex: 0 0 52px; width: 52px; height: 52px; border: 0; border-radius: 50%; box-shadow: none;
+    flex: 0 0 54px; width: 54px; height: 54px; border: 0; border-radius: 50%; box-shadow: none;
     outline: none; background: #8cb2ba;
 }
 body.tt-mobile-chat-shell #rm_print_characters_block .avatar img {
-    width: 52px; height: 52px; border-radius: 50%; object-fit: cover; box-shadow: none; filter: none;
+    width: 54px; height: 54px; border-radius: 50%; object-fit: cover; box-shadow: none; filter: none; border: 0; outline: 0;
 }
 body.tt-mobile-chat-shell #rm_print_characters_block .character_select_container { flex: 1; min-width: 0; width: auto; gap: 4px; }
 body.tt-mobile-chat-shell #rm_print_characters_block .character_name_block { width: 100%; margin: 0; }
@@ -508,10 +586,10 @@ body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #rm_print_characters_block 
     display: flex; align-items: baseline; gap: 12px;
 }
 body.tt-mobile-chat-shell #rm_print_characters_block .tt-chat-time {
-    flex-shrink: 0; margin-left: auto; color: var(--tt-muted); font-size: 12px; font-weight: 400; white-space: nowrap;
+    flex-shrink: 0; margin-left: auto; color: var(--tt-muted); font-size: 13px; font-weight: 400; white-space: nowrap;
 }
 body.tt-mobile-chat-shell #rm_print_characters_block .tt-chat-preview {
-    width: 100%; min-width: 0; overflow: hidden; color: var(--tt-muted); font-size: 14px; line-height: 21px;
+    width: 100%; min-width: 0; overflow: hidden; color: var(--tt-muted); font-size: 15px; line-height: 21px;
     text-overflow: ellipsis; white-space: nowrap; text-align: left;
 }
 body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #rm_print_characters_block .ch_name {
@@ -522,6 +600,7 @@ body.tt-mobile-chat-shell #rm_print_characters_block .ch_name { font-size: 16px;
 body.tt-mobile-chat-shell #rm_print_characters_block .is_fav .ch_name { color: var(--tt-text); }
 body.tt-mobile-chat-shell #rm_print_characters_block .ch_description { margin: 0; color: var(--tt-muted); font-size: 14px; line-height: 21px; }
 body.tt-mobile-chat-shell #rm_print_characters_block .tags_inline:empty { display: none; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #rm_print_characters_block .tags_inline { display: none; }
 body.tt-mobile-chat-shell #rm_print_characters_block .tags_inline .tag {
     font-size: 11px; border: 0; border-radius: 5px; padding: 2px 6px;
     color: var(--tt-accent); background: var(--tt-accent-soft);
@@ -533,6 +612,12 @@ body.tt-mobile-chat-shell #rm_print_characters_pagination {
 body.tt-mobile-chat-shell .paginationjs { display: flex; align-items: center; width: 100%; color: var(--tt-muted); flex-wrap: wrap; justify-content: space-between; gap: 8px; font-weight: 400; }
 body.tt-mobile-chat-shell .paginationjs-nav { font-size: 12px; font-weight: 400; }
 body.tt-mobile-chat-shell .paginationjs-pages:not(:has(li:not(.disabled))) { display: none; }
+/* A single page needs no pager: keep the list edge-to-edge like Telegram and
+ * leave the corner to the floating import action. */
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"] #rm_print_characters_pagination:not(:has(.paginationjs-pages li:not(.disabled))) { display: none; }
+body.tt-mobile-chat-shell[data-tt-chat-view="roles"]:has(#rm_print_characters_pagination .paginationjs-pages li:not(.disabled)) #tt-roles-fab {
+    bottom: calc(88px + var(--tt-viewport-bottom-inset, 0px));
+}
 body.tt-mobile-chat-shell .paginationjs-pages ul { margin: 0; gap: 4px; }
 body.tt-mobile-chat-shell .paginationjs-pages :is(button, a) {
     display: grid; place-items: center; min-width: 48px; min-height: 48px; margin: 0; padding: 0;
@@ -742,6 +827,139 @@ body.tt-mobile-chat-shell dialog.popup::backdrop { background: #071b3370; backdr
 @keyframes tt-page-enter {
     from { opacity: 0; transform: translateX(18px); }
     to { opacity: 1; transform: translateX(0); }
+}
+
+/* Telegram settings page: flush grouped rows, switches, radio sheets. */
+body.tt-mobile-chat-shell #tt-settings-page {
+    position: fixed; z-index: 3009; top: var(--tt-shell-header-height); left: var(--tt-sidebar); right: 0; bottom: 0;
+    overflow-y: auto; overscroll-behavior: contain; padding: 0 0 calc(24px + var(--tt-viewport-bottom-inset, 0px));
+    color: var(--tt-text); background: var(--tt-bg); animation: tt-page-enter var(--tt-motion-page) var(--tt-ease);
+}
+body.tt-mobile-chat-shell #tt-settings-page * { box-sizing: border-box; }
+body.tt-mobile-chat-shell .tt-sp-group { margin: 0 0 10px; padding: 4px 0; background: var(--tt-surface); box-shadow: 0 1px 1px #10233212; }
+body.tt-mobile-chat-shell .tt-sp-group h2 {
+    margin: 0; padding: 12px 20px 6px; color: var(--tt-accent); font-size: 15px; line-height: 20px; font-weight: 500;
+}
+body.tt-mobile-chat-shell .tt-sp-row {
+    position: relative; display: flex; align-items: center; gap: 16px; width: 100%; min-height: 52px;
+    margin: 0; padding: 8px 20px; border: 0; border-radius: 0; color: var(--tt-text); background: transparent;
+    font: inherit; font-size: 16px; line-height: 22px; text-align: left; cursor: pointer; touch-action: manipulation;
+    transition: background-color 140ms ease;
+}
+body.tt-mobile-chat-shell .tt-sp-row:is(button):active { background: var(--tt-field); }
+body.tt-mobile-chat-shell .tt-sp-row:focus-visible { outline: 2px solid var(--tt-accent); outline-offset: -2px; }
+body.tt-mobile-chat-shell .tt-sp-row:disabled { opacity: .45; cursor: default; }
+body.tt-mobile-chat-shell .tt-sp-row + .tt-sp-row::before {
+    content: ""; position: absolute; top: 0; left: 20px; right: 0; height: 1px; background: var(--tt-line);
+}
+body.tt-mobile-chat-shell .tt-sp-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+body.tt-mobile-chat-shell .tt-sp-value {
+    flex: 0 1 auto; max-width: 45%; overflow: hidden; color: var(--tt-accent); font-size: 15px;
+    text-overflow: ellipsis; white-space: nowrap;
+}
+body.tt-mobile-chat-shell .tt-sp-link svg { width: 18px; height: 18px; color: var(--tt-muted); }
+body.tt-mobile-chat-shell .tt-sp-switch {
+    position: relative; flex: 0 0 36px; width: 36px; height: 14px; border-radius: 7px;
+    background: color-mix(in srgb, var(--tt-muted) 45%, transparent); transition: background-color 160ms ease;
+}
+body.tt-mobile-chat-shell .tt-sp-switch::after {
+    content: ""; position: absolute; top: -3px; left: -2px; width: 20px; height: 20px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px #0005; transition: transform 160ms var(--tt-ease), background-color 160ms ease;
+}
+body.tt-mobile-chat-shell .tt-sp-row[aria-checked="true"] .tt-sp-switch { background: color-mix(in srgb, var(--tt-primary) 55%, transparent); }
+body.tt-mobile-chat-shell .tt-sp-row[aria-checked="true"] .tt-sp-switch::after { transform: translateX(20px); background: var(--tt-primary); }
+body.tt-mobile-chat-shell .tt-sp-slider { flex-wrap: wrap; row-gap: 2px; cursor: default; padding-bottom: 4px; }
+body.tt-mobile-chat-shell .tt-sp-slider input[type="range"] {
+    /* Telegram slider: thin track, accent fill up to a round thumb. The global
+     * theme styles ranges heavily, so reset everything here. */
+    --tt-fill: 50%;
+    flex: 1 0 100%; width: 100%; height: 28px; min-height: 0; margin: 0; padding: 0;
+    border: 0 !important; border-radius: 0; box-shadow: none !important; outline: none;
+    background: transparent !important; -webkit-appearance: none; appearance: none; cursor: pointer;
+}
+body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]::-webkit-slider-runnable-track {
+    height: 3px; border: 0; border-radius: 2px;
+    background: linear-gradient(to right, var(--tt-primary) var(--tt-fill), color-mix(in srgb, var(--tt-muted) 35%, transparent) var(--tt-fill));
+}
+body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]::-webkit-slider-thumb {
+    width: 18px; height: 18px; margin-top: -7.5px; border: 0; border-radius: 50%;
+    background: var(--tt-primary); box-shadow: none; -webkit-appearance: none; appearance: none;
+}
+body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]::-moz-range-track {
+    height: 3px; border: 0; border-radius: 2px; background: color-mix(in srgb, var(--tt-muted) 35%, transparent);
+}
+body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]::-moz-range-progress { height: 3px; border-radius: 2px; background: var(--tt-primary); }
+body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px; border: 0; border-radius: 50%; background: var(--tt-primary);
+}
+body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 6px color-mix(in srgb, var(--tt-primary) 25%, transparent); }
+body.tt-mobile-chat-shell .tt-sp-slider .tt-sp-value { color: var(--tt-muted); }
+body.tt-mobile-chat-shell .tt-sp-footer {
+    margin: -4px 0 16px; padding: 0 20px; color: var(--tt-muted); font-size: 13px; line-height: 18px;
+}
+body.tt-mobile-chat-shell .tt-sp-text .tt-sp-value { max-width: 55%; color: var(--tt-muted); }
+body.tt-mobile-chat-shell .tt-sp-value.tt-sp-empty { color: var(--tt-muted); opacity: .7; }
+body.tt-mobile-chat-shell .tt-sp-action .tt-sp-label { color: var(--tt-accent); font-weight: 500; }
+body.tt-mobile-chat-shell .tt-sp-status { cursor: default; }
+body.tt-mobile-chat-shell .tt-sp-status .tt-sp-value { max-width: 60%; color: var(--tt-muted); white-space: normal; text-align: right; }
+body.tt-mobile-chat-shell .tt-sp-note { margin: 0; padding: 4px 20px 10px; color: var(--tt-muted); font-size: 13px; line-height: 18px; }
+body.tt-mobile-chat-shell .tt-sp-filter,
+body.tt-mobile-chat-shell .tt-sp-field {
+    display: block; width: calc(100% - 48px); margin: 4px 24px 12px; padding: 8px 0; min-height: 40px;
+    color: var(--tt-text); background: transparent; border: 0; border-bottom: 2px solid var(--tt-primary);
+    border-radius: 0; box-shadow: none; outline: none; font: inherit; font-size: 16px;
+}
+body.tt-mobile-chat-shell textarea.tt-sp-field { min-height: 120px; resize: vertical; }
+body.tt-mobile-chat-shell .tt-sp-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 4px 12px 2px; }
+body.tt-mobile-chat-shell .tt-sp-actions[hidden] { display: none; }
+body.tt-mobile-chat-shell .tt-sp-actions button {
+    min-width: 64px; min-height: 40px; margin: 0; padding: 0 12px; border: 0; border-radius: 4px;
+    color: var(--tt-accent); background: transparent; font: inherit; font-size: 15px; font-weight: 500; text-transform: uppercase; cursor: pointer;
+}
+body.tt-mobile-chat-shell .tt-sp-actions button:active { background: var(--tt-field); }
+body.tt-mobile-chat-shell .tt-sp-pick { gap: 14px; min-height: 64px; padding-block: 8px; }
+body.tt-mobile-chat-shell .tt-sp-pick + .tt-sp-row::before,
+body.tt-mobile-chat-shell .tt-sp-row + .tt-sp-pick::before { left: 82px; }
+body.tt-mobile-chat-shell .tt-sp-avatar {
+    flex: 0 0 48px; display: grid; place-items: center; width: 48px; height: 48px; overflow: hidden;
+    border-radius: 50%; color: #fff; background: #7e9fb5 center/cover no-repeat; font-size: 20px; font-weight: 500;
+}
+body.tt-mobile-chat-shell .tt-sp-pick-copy { flex: 1; min-width: 0; }
+body.tt-mobile-chat-shell .tt-sp-pick-copy .tt-sp-label,
+body.tt-mobile-chat-shell .tt-sp-pick-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.tt-mobile-chat-shell .tt-sp-pick-copy small { margin-top: 2px; color: var(--tt-muted); font-size: 14px; line-height: 20px; }
+body.tt-mobile-chat-shell .tt-sp-pick-copy small[hidden] { display: none; }
+body.tt-mobile-chat-shell .tt-sp-check { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; }
+body.tt-mobile-chat-shell .tt-sp-pick[aria-current="true"] .tt-sp-check {
+    background: var(--tt-primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12.5 4 4 8-9'/%3E%3C/svg%3E") center/16px no-repeat;
+}
+body.tt-mobile-chat-shell .tt-sp-pick[aria-current="true"] .tt-sp-label { color: var(--tt-accent); }
+body.tt-mobile-chat-shell .tt-sp-box { flex: 0 0 20px; width: 20px; height: 20px; border: 2px solid var(--tt-muted); border-radius: 4px; }
+body.tt-mobile-chat-shell .tt-sp-option[aria-checked="true"] .tt-sp-box {
+    border-color: var(--tt-primary);
+    background: var(--tt-primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12.5 4 4 8-9'/%3E%3C/svg%3E") center/14px no-repeat;
+}
+body.tt-mobile-chat-shell .tt-sp-sheet { position: fixed; z-index: 4100; inset: 0; display: grid; place-items: center; padding: 24px; }
+body.tt-mobile-chat-shell .tt-sp-sheet[hidden] { display: none; }
+body.tt-mobile-chat-shell .tt-sp-sheet-scrim {
+    position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; background: #0006;
+}
+body.tt-mobile-chat-shell .tt-sp-dialog {
+    position: relative; width: min(340px, 100%); max-height: min(70vh, 560px); overflow-y: auto;
+    padding: 18px 0 8px; color: var(--tt-text); background: var(--tt-surface); border-radius: 8px;
+    box-shadow: 0 8px 32px #0004; animation: tt-dialog-in 170ms var(--tt-ease);
+}
+body.tt-mobile-chat-shell .tt-sp-dialog h3 { margin: 0 0 8px; padding: 0 24px; font-size: 19px; line-height: 26px; font-weight: 500; }
+body.tt-mobile-chat-shell .tt-sp-option {
+    display: flex; align-items: center; gap: 20px; width: 100%; min-height: 48px; margin: 0; padding: 0 24px;
+    border: 0; border-radius: 0; color: inherit; background: transparent; font: inherit; font-size: 16px; text-align: left; cursor: pointer;
+}
+body.tt-mobile-chat-shell .tt-sp-option:active { background: var(--tt-field); }
+body.tt-mobile-chat-shell .tt-sp-radio {
+    flex: 0 0 20px; width: 20px; height: 20px; border: 2px solid var(--tt-muted); border-radius: 50%;
+}
+body.tt-mobile-chat-shell .tt-sp-option[aria-checked="true"] .tt-sp-radio {
+    border-color: var(--tt-primary); box-shadow: inset 0 0 0 3px var(--tt-surface), inset 0 0 0 10px var(--tt-primary);
 }
 @keyframes tt-page-back {
     from { opacity: 0; transform: translateX(-18px); }

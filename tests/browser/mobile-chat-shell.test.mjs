@@ -62,11 +62,12 @@ test('mobile navigation uses native drawers, protects saves and respects dialog 
     assert.equal(document.body.dataset.ttChatView, 'roles');
     await shell.navigate('chat');
 
-    for (const id of ['rm_api_block', 'right-nav-panel']) {
+    // Panels with a mobile settings page open that page instead of the drawer.
+    for (const [id, view] of [['rm_api_block', 'page'], ['right-nav-panel', 'panel']]) {
         const panel = document.getElementById(id);
         const toggle = panel.closest('.drawer').querySelector(':scope > .drawer-toggle');
         await main.doNavbarIconClick.call(toggle);
-        assert.equal(document.body.dataset.ttChatView, 'panel', 'Native welcome and drawer shortcuts use the same mobile navigation');
+        assert.equal(document.body.dataset.ttChatView, view, 'Native welcome and drawer shortcuts use the same mobile navigation');
         assert.equal(document.getElementById('tt-chat-back').hidden, false);
         assert.equal(document.getElementById('sheld').inert, true);
         assert.equal(window.__TAURITAVERN_HANDLE_BACK__(), true);
@@ -104,6 +105,11 @@ test('mobile navigation uses native drawers, protects saves and respects dialog 
     await shell.navigate('more');
     assert.ok(!document.getElementById('right-nav-panel').classList.contains('openDrawer'));
     await shell.openPanel('WorldInfo', 'World Info');
+    assert.equal(document.body.dataset.ttChatView, 'page', 'World Info opens its mobile settings page');
+    assert.ok(!document.getElementById('WorldInfo').classList.contains('openDrawer'));
+    await shell.back();
+    // The full native editor is still reachable from the page.
+    await shell.openPanel('native:WorldInfo', 'World Info');
     assert.ok(document.getElementById('WorldInfo').classList.contains('openDrawer'));
 
     const dialog = document.createElement('dialog');

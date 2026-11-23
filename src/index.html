@@ -20,12 +20,45 @@
         } catch (error) {
             console.warn('Could not restore OLED background setting:', error);
         }
+        // The Tauri host defines its identity before page scripts run. On phones,
+        // hide the desktop layout until the mobile shell is installed so it never
+        // flashes; the shell removes this class. Without the identity (web host),
+        // startup is unchanged.
+        try {
+            if (window.__TAURITAVERN_HOST__ && window.__TAURITAVERN_HOST__.kind === 'mobile') {
+                document.documentElement.classList.add('tt-mobile-booting');
+                if (localStorage.getItem('tt-chat-color-scheme') === 'night') {
+                    document.documentElement.dataset.ttBootScheme = 'night';
+                }
+            }
+        } catch (error) {
+            console.warn('Could not prepare mobile startup screen:', error);
+        }
     </script>
     <style>
         /* Put critical CSS here. The rest should go in stylesheets. */
         body {
             background-color: rgb(36, 36, 37);
         }
+        /* Mobile startup: only the app-bar colour, startup status, toasts and a
+         * startup failure are visible until the mobile shell takes over. */
+        html.tt-mobile-booting body {
+            background: #fff !important;
+        }
+        /* Startup prompts (migration, recovery) must stay reachable. */
+        html.tt-mobile-booting body > :not(#tt-startup-status-overlay, #tt-startup-failure, #toast-container, dialog, .popup) {
+            visibility: hidden !important;
+        }
+        html.tt-mobile-booting body::before {
+            content: "";
+            position: fixed;
+            z-index: 999998;
+            inset: 0 0 auto;
+            height: calc(56px + env(safe-area-inset-top, 0px));
+            background: #517da2;
+        }
+        html.tt-mobile-booting[data-tt-boot-scheme="night"] body { background: #0e1621 !important; }
+        html.tt-mobile-booting[data-tt-boot-scheme="night"] body::before { background: #212d3b; }
     </style>
     <link rel="preload" as="style" href="style.css">
     <link rel="manifest" crossorigin="use-credentials" href="manifest.json">

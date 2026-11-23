@@ -11,12 +11,19 @@ import {
 import { setNavbarDrawerOpen } from '../script.js';
 import { isTopLevelDrawerOpen, setTopLevelDrawerOpen, subscribeDrawerState } from './drawers.js';
 import { installMobileChatShell } from './mobile-chat-shell.js';
+import { mobileSettingsPages } from './mobile-settings-schema.js';
 import { translate } from './i18n.js';
 import { pushBackNavigationHandler } from '../tauri/main/services/back-navigation/back-handler-stack.js';
 import { handleBackNavigation } from '../tauri/main/back-navigation.js';
 
 let installedShell;
 let closingPanels = false;
+
+/** Reveal the page hidden by the startup script in index.html. */
+export function endMobileBoot() {
+    document.documentElement.classList.remove('tt-mobile-booting');
+    delete document.documentElement.dataset.ttBootScheme;
+}
 
 function panelToggle(panelId) {
     const panel = document.getElementById(panelId);
@@ -62,7 +69,9 @@ async function showHistory(signal) {
     await setChatHistoryOpen(true, { signal });
 }
 
-async function showPanel(panelId, signal) {
+async function showPanel(requestedPanel, signal) {
+    // "native:<id>" opens the native panel even where a mobile page replaces it.
+    const panelId = requestedPanel.replace(/^native:/, '');
     if (panelId === 'app-settings') {
         const { openTauriTavernSettingsPopup } = await import('./tauri/setting/setting-panel/settings-popup.js');
         await openTauriTavernSettingsPopup({ signal });
@@ -72,7 +81,23 @@ async function showPanel(panelId, signal) {
         await showCharacters(signal);
         return;
     }
+    // Character profile and creation are tabs of the native character drawer;
+    // its own buttons switch the tab so no form state is duplicated here.
+    if (panelId === 'character-card' || panelId === 'character-create') {
+        await openDrawer('right-nav-panel', signal);
+        if (signal?.aborted) return;
+        document.getElementById(panelId === 'character-card' ? 'rm_button_selected_ch' : 'rm_button_create')?.click();
+        return;
+    }
     await openDrawer(panelId, signal);
+}
+
+/** Render native lists that a mobile page mirrors but only fill on demand. */
+async function preparePage(panelId) {
+    if (panelId === 'PersonaManagement') {
+        const { getUserAvatars } = await import('./personas.js');
+        await getUserAvatars(true);
+    }
 }
 
 function currentChat() {
@@ -80,6 +105,7 @@ function currentChat() {
     return {
         title: details.characterName || details.sessionName || '',
         avatar: details.avatarImgURL || '',
+        group: Boolean(details.group),
         connected: online_status !== 'no_connection',
         status: isGenerating() ? translate('Generating reply…') : online_status === 'no_connection'
             ? translate('Connect to start chatting') : translate('Ready to chat'),
@@ -105,6 +131,8 @@ export function installMobileChatShellRuntime() {
         showPanel,
         notify: text => toastr.info(text),
         requestBack: handleBackNavigation,
+        settingsPages: mobileSettingsPages,
+        preparePage,
         subscribeChatChanged: listener => {
             const events = [event_types.CHAT_CHANGED, event_types.CHARACTER_SELECTED];
             for (const event of events) eventSource.on(event, listener);
@@ -113,6 +141,10 @@ export function installMobileChatShellRuntime() {
         translate,
     });
     const shell = installedShell;
+    // Show the page once the conversation list is in place, or as soon as it fails.
+    void shell.ready.finally(endMobileBoot);
+    // A slow first list load must not keep a working app hidden.
+    setTimeout(endMobileBoot, 8000);
     const openMobileMore = event => {
         event.preventDefault();
         void shell.navigate('more');

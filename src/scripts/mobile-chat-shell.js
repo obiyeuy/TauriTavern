@@ -1,4 +1,5 @@
 import { mobileChatIcon as icon } from './mobile-chat-icons.js';
+import { renderSettingsPage } from './mobile-settings-page.js';
 
 /**
  * Mobile navigation owns presentation only. Native drawers and chat history own
@@ -6,7 +7,8 @@ import { mobileChatIcon as icon } from './mobile-chat-icons.js';
  */
 export function installMobileChatShell({
     document, getChat, busy, closePanels, showCharacters, showHistory, showPanel,
-    notify, subscribeChatChanged, requestBack, translate = text => text,
+    notify, subscribeChatChanged, requestBack, translate = text => text, settingsPages = {},
+    preparePage = async () => {},
 }) {
     const body = document.body;
     const t = translate;
@@ -15,8 +17,9 @@ export function installMobileChatShell({
     header.innerHTML = `<button type="button" id="tt-chat-menu" aria-controls="tt-chat-tabs" aria-expanded="false">${icon('menu')}</button>
         <button type="button" id="tt-chat-back">${icon('back')}</button>
         <div id="tt-chat-avatar" aria-hidden="true"></div><div class="tt-chat-heading"><h1 id="tt-chat-title"></h1><span id="tt-chat-subtitle"></span></div>
-        <button type="button" id="tt-chat-search">${icon('search')}</button>
-        <button type="button" id="tt-chat-more">${icon('more')}</button>
+        <input type="search" id="tt-chat-search-input" autocomplete="off" enterkeyhint="search" hidden>
+        <button type="button" id="tt-chat-search" aria-controls="form_character_search_form"></button>
+        <button type="button" id="tt-chat-more" aria-haspopup="dialog" aria-controls="tt-chat-actions">${icon('more')}</button>
         <div id="tt-chat-feedback" role="status" hidden><span></span><button type="button"></button></div>`;
     const tabs = document.createElement('nav');
     tabs.id = 'tt-chat-tabs';
@@ -28,25 +31,30 @@ export function installMobileChatShell({
     ];
     const routeList = document.createElement('div');
     routeList.className = 'tt-nav-routes';
-    for (const [route, label, glyph] of routes) {
-        if (route === 'chat') continue;
+    // Telegram's drawer lists app-level places. Chat-specific actions (history,
+    // new chat) live in the conversation's own menu instead of greyed-out rows.
+    const drawerItems = [
+        ['route', 'roles', 'Chats', 'chat'],
+        ['panel', 'PersonaManagement', 'Persona Management', 'user'],
+        ['panel', 'WorldInfo', 'World Info', 'book'],
+        ['panel', 'rm_extensions_block', 'Extensions', 'puzzle'],
+        ['route', 'more', 'Settings', 'settings'],
+    ];
+    const shortcutPanels = drawerItems.filter(([kind]) => kind === 'panel').map(([, id]) => id);
+    for (const [kind, target, label, glyph] of drawerItems) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.dataset.ttRoute = route;
+        if (kind === 'route') button.dataset.ttRoute = target;
+        else button.dataset.ttShortcut = target;
         button.innerHTML = `${icon(glyph)}<span></span>`;
         button.querySelector('span').textContent = t(label);
-        button.addEventListener('click', () => void navigate(route));
+        button.addEventListener('click', () => void (kind === 'route' ? navigate(target) : openPanel(target, t(label))));
         routeList.append(button);
     }
     const drawerProfile = document.createElement('div');
     drawerProfile.id = 'tt-nav-profile';
     drawerProfile.innerHTML = `<div id="tt-nav-profile-avatar" aria-hidden="true">T</div><strong>TauriTavern</strong><small></small><button type="button" id="tt-nav-theme">${icon('moon')}</button>`;
     drawerProfile.querySelector('small').textContent = t('Your personal tavern');
-    const drawerSearch = document.createElement('label');
-    drawerSearch.id = 'tt-nav-search';
-    drawerSearch.innerHTML = `${icon('search')}<input type="search"><span class="sr-only"></span>`;
-    drawerSearch.querySelector('input').placeholder = t('Search');
-    drawerSearch.querySelector('.sr-only').textContent = t('Search menu');
     const currentChat = document.createElement('button');
     currentChat.type = 'button';
     currentChat.id = 'tt-nav-chat';
@@ -55,19 +63,7 @@ export function installMobileChatShell({
     const currentHeading = document.createElement('h2');
     currentHeading.className = 'tt-nav-section-title';
     currentHeading.textContent = t('Current conversation');
-    const drawerFooter = document.createElement('p');
-    drawerFooter.className = 'tt-nav-footer';
-    drawerFooter.textContent = t('A little space for your stories');
-    tabs.append(drawerProfile, drawerSearch, routeList, currentHeading, currentChat, drawerFooter);
-    const filterNavigation = () => {
-        const query = drawerSearch.querySelector('input').value.trim().toLocaleLowerCase();
-        for (const button of routeList.querySelectorAll('button')) {
-            button.hidden = !button.textContent.toLocaleLowerCase().includes(query);
-        }
-        currentChat.hidden = !getChat().title || !currentChat.textContent.toLocaleLowerCase().includes(query);
-        currentHeading.hidden = currentChat.hidden;
-    };
-    drawerSearch.querySelector('input').addEventListener('input', filterNavigation);
+    tabs.append(drawerProfile, routeList, currentHeading, currentChat);
     const more = document.createElement('section');
     more.id = 'tt-more-panel';
     more.hidden = true;
@@ -142,7 +138,13 @@ export function installMobileChatShell({
     scrim.id = 'tt-chat-nav-scrim';
     scrim.type = 'button';
     scrim.setAttribute('aria-label', t('Close navigation'));
-    body.append(scrim, more, tabs);
+    // Telegram-style pages that stand in for native settings panels on phones.
+    const pageSection = document.createElement('section');
+    pageSection.id = 'tt-settings-page';
+    pageSection.hidden = true;
+    pageSection.tabIndex = -1;
+    let settingsPage;
+    body.append(scrim, more, pageSection, tabs);
     const actions = document.createElement('section');
     actions.id = 'tt-chat-actions';
     actions.hidden = true;
@@ -154,22 +156,18 @@ export function installMobileChatShell({
     actionScrim.type = 'button';
     actionScrim.hidden = true;
     actionScrim.setAttribute('aria-label', t('Close'));
-    for (const [label, glyph, action] of [
-        ['History', 'history', () => navigate('history')],
-        ['Character Management', 'user', () => openPanel('right-nav-panel', t('Character Management'))],
-        ['World Info', 'book', () => openPanel('WorldInfo', t('World Info'))],
-        ['API Connections', 'connection', () => openPanel('rm_api_block', t('API Connections'))],
-        ['Extensions', 'puzzle', () => openPanel('rm_extensions_block', t('Extensions'))],
-        ['Settings', 'settings', () => navigate('more')],
-    ]) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.innerHTML = `${icon(glyph)}<span></span>`;
-        button.querySelector('span').textContent = t(label);
-        button.addEventListener('click', () => { setActions(false); void action(); });
-        actions.append(button);
-    }
-    body.append(actionScrim, actions);
+    // One floating "new" action, like Telegram's pencil. Its menu rows click the
+    // native create/import buttons, which keep owning the actual logic.
+    const fab = document.createElement('button');
+    fab.type = 'button';
+    fab.id = 'tt-roles-fab';
+    fab.hidden = true;
+    fab.setAttribute('aria-label', t('Create'));
+    fab.setAttribute('aria-haspopup', 'dialog');
+    fab.setAttribute('aria-controls', 'tt-chat-actions');
+    fab.setAttribute('aria-expanded', 'false');
+    fab.innerHTML = icon('pencil');
+    body.append(actionScrim, actions, fab);
     const connectButton = document.createElement('button');
     connectButton.type = 'button';
     connectButton.id = 'tt-compose-connect';
@@ -179,6 +177,10 @@ export function installMobileChatShell({
     document.getElementById('rightSendForm')?.append(connectButton);
     body.classList.add('tt-mobile-chat-shell');
     let view = 'roles';
+    let actionsOrigin;
+    // Telegram keeps list search in the app bar; the native field stays the
+    // single owner of the query and this flag only controls its visibility.
+    let searchingRoles = false;
     let panelTitle = '';
     let panelId = '';
     const trail = [];
@@ -196,13 +198,18 @@ export function installMobileChatShell({
     const subtitle = header.querySelector('#tt-chat-subtitle');
     const backButton = header.querySelector('#tt-chat-back');
     const menuButton = header.querySelector('#tt-chat-menu');
+    const searchButton = header.querySelector('#tt-chat-search');
+    const moreButton = header.querySelector('#tt-chat-more');
     const avatar = header.querySelector('#tt-chat-avatar');
     const feedback = header.querySelector('#tt-chat-feedback');
     const retryButton = feedback.querySelector('button');
+    const heading = header.querySelector('.tt-chat-heading');
+    const searchInput = header.querySelector('#tt-chat-search-input');
+    searchInput.placeholder = t('Search');
+    searchInput.setAttribute('aria-label', t('Search'));
     backButton.setAttribute('aria-label', t('Back'));
     menuButton.setAttribute('aria-label', t('Open navigation'));
-    header.querySelector('#tt-chat-more').setAttribute('aria-label', t('Settings'));
-    header.querySelector('#tt-chat-search').setAttribute('aria-label', t('Search'));
+    moreButton.setAttribute('aria-label', t('Chat actions'));
     const themeButton = tabs.querySelector('#tt-nav-theme');
     themeButton.setAttribute('aria-label', t('Night mode'));
     retryButton.textContent = t('Retry');
@@ -226,14 +233,30 @@ export function installMobileChatShell({
     function setActions(open, { restoreFocus = false } = {}) {
         actions.hidden = !open;
         actionScrim.hidden = !open;
-        header.querySelector('#tt-chat-more').setAttribute('aria-expanded', String(open));
+        for (const origin of [moreButton, fab]) origin.setAttribute('aria-expanded', String(open && origin === actionsOrigin));
         chatSurface.inert = open || view !== 'chat';
-        if (open) actions.querySelector('button').focus({ preventScroll: true });
-        else if (restoreFocus) header.querySelector('#tt-chat-more').focus({ preventScroll: true });
+        if (open) actions.querySelector('button')?.focus({ preventScroll: true });
+        else if (restoreFocus) actionsOrigin?.focus({ preventScroll: true });
+    }
+
+    function openActions(items, origin) {
+        actions.replaceChildren();
+        for (const [label, glyph, action] of items) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.innerHTML = `${icon(glyph)}<span></span>`;
+            button.querySelector('span').textContent = t(label);
+            button.addEventListener('click', () => { setActions(false); void action(); });
+            actions.append(button);
+        }
+        actionsOrigin = origin;
+        actions.dataset.ttAnchor = origin === fab ? 'fab' : 'bar';
+        setActions(true);
     }
 
     function changeView(target, direction = 'forward') {
         body.dataset.ttMotion = direction;
+        if (target.view !== 'roles') closeRoleSearch({ render: false });
         view = target.view;
         panelId = target.panelId || '';
         panelTitle = target.title || '';
@@ -246,28 +269,32 @@ export function installMobileChatShell({
         connectButton.hidden = chat.connected !== false;
         body.dataset.ttConnected = String(chat.connected !== false);
         body.dataset.ttChatView = view;
+        body.dataset.ttRolesSearch = String(view === 'roles' && searchingRoles);
+        // Like Telegram, sender names only matter when several speakers share a chat.
+        body.dataset.ttGroupChat = String(Boolean(chat.group));
         setNavigation(body.dataset.ttNavOpen === 'true');
         more.hidden = view !== 'more';
+        pageSection.hidden = view !== 'page';
+        // Connection status and other native state can change behind the page.
+        if (view === 'page') settingsPage?.refresh();
         title.textContent = view === 'roles' ? t('Chats') : view === 'chat' ? chat.title || t('Choose a character')
-            : view === 'panel' ? panelTitle : t(routes.find(([route]) => route === view)[1]);
+            : view === 'panel' || view === 'page' ? panelTitle : t(routes.find(([route]) => route === view)[1]);
         subtitle.textContent = view === 'chat' ? chat.status : view === 'roles'
             ? t('Your characters, one conversation away') : view === 'history'
-                ? chat.title : view === 'panel' ? t(panels.find(([id]) => id === panelId)?.[2] || '') : t('Make yourself at home');
-        backButton.hidden = view === 'roles';
-        menuButton.hidden = view !== 'roles';
+                ? chat.title : view === 'panel' ? t(panels.find(([id]) => id === panelId)?.[2] || '') : '';
+        // Telegram turns the app bar itself into the search field.
+        const searching = view === 'roles' && searchingRoles;
+        backButton.hidden = view === 'roles' && !searching;
+        menuButton.hidden = view !== 'roles' || searching;
+        heading.hidden = searching;
+        searchInput.hidden = !searching;
         avatar.hidden = view !== 'chat';
-        header.querySelector('#tt-chat-search').hidden = view !== 'roles';
-        header.querySelector('#tt-chat-more').hidden = view !== 'chat' && view !== 'roles';
-        header.querySelector('#tt-chat-more').setAttribute('aria-label', t(view === 'chat' ? 'Chat actions' : 'Settings'));
-        header.querySelector('#tt-chat-more').innerHTML = icon(view === 'chat' ? 'more' : 'settings');
-        if (view === 'chat') {
-            header.querySelector('#tt-chat-more').setAttribute('aria-haspopup', 'dialog');
-            header.querySelector('#tt-chat-more').setAttribute('aria-controls', actions.id);
-        } else {
-            header.querySelector('#tt-chat-more').removeAttribute('aria-haspopup');
-            header.querySelector('#tt-chat-more').removeAttribute('aria-controls');
-            header.querySelector('#tt-chat-more').removeAttribute('aria-expanded');
-        }
+        searchButton.hidden = view !== 'roles';
+        searchButton.innerHTML = icon(searchingRoles ? 'close' : 'search');
+        searchButton.setAttribute('aria-label', t(searchingRoles ? 'Close search' : 'Search'));
+        searchButton.setAttribute('aria-expanded', String(searchingRoles));
+        moreButton.hidden = view !== 'chat';
+        fab.hidden = view !== 'roles' || searchingRoles;
         const image = chat.avatar ? `url(${JSON.stringify(chat.avatar)})` : '';
         const initial = chat.title ? [...chat.title][0].toUpperCase() : 'T';
         avatar.textContent = image ? '' : initial;
@@ -276,10 +303,11 @@ export function installMobileChatShell({
         currentChat.querySelector('.tt-nav-chat-avatar').style.backgroundImage = image;
         currentChat.querySelector('strong').textContent = chat.title || t('Choose a character');
         currentChat.querySelector('small').textContent = chat.status;
-        filterNavigation();
+        currentChat.hidden = !chat.title;
+        currentHeading.hidden = !chat.title;
         for (const button of routeList.querySelectorAll('button')) {
-            button.disabled = button.dataset.ttRoute === 'history' && !chat.title;
-            const active = button.dataset.ttRoute === (view === 'panel' ? 'more' : view);
+            const active = button.dataset.ttShortcut ? view === 'panel' && panelId === button.dataset.ttShortcut
+                : button.dataset.ttRoute === ((view === 'panel' || view === 'page') && !shortcutPanels.includes(panelId) ? 'more' : view);
             if (active) button.setAttribute('aria-current', 'page');
             else button.removeAttribute('aria-current');
         }
@@ -290,6 +318,59 @@ export function installMobileChatShell({
         feedback.querySelector('span').textContent = text;
         retry = action;
         retryButton.hidden = !action;
+    }
+
+    /** Leave list search mode and clear the native filter it drove. */
+    function closeRoleSearch({ render: rerender = true } = {}) {
+        if (!searchingRoles) return false;
+        searchingRoles = false;
+        searchInput.value = '';
+        const field = document.getElementById('character_search_bar');
+        if (field && field.value) {
+            field.value = '';
+            field.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+        }
+        if (rerender) render();
+        return true;
+    }
+
+    function startNewChat() {
+        const reason = busy();
+        if (reason) { message(reason); notify(reason); return; }
+        document.getElementById('option_start_new_chat')?.click();
+    }
+
+    /** Things you do to this conversation, as in Telegram's chat menu. */
+    function chatActionItems() {
+        return [
+            ['Start new chat', 'newChat', startNewChat],
+            ['History', 'history', () => navigate('history')],
+            ...(getChat().group ? [] : [['Character profile', 'user', () => openPanel('character-card', t('Character profile'))]]),
+            ['World Info', 'book', () => openPanel('WorldInfo', t('World Info'))],
+            ['API Connections', 'connection', () => openPanel('rm_api_block', t('API Connections'))],
+        ];
+    }
+
+    function createActionItems() {
+        return [
+            ['Create New Character', 'userPlus', () => openPanel('character-create', t('Create New Character'))],
+            ['Import Character from File', 'import', () => document.getElementById('character_import_button')?.click()],
+            ['Import content from external URL', 'globe', () => document.getElementById('external_import_button')?.click()],
+        ];
+    }
+
+    // Some native lists (personas) render only when their drawer opens; let
+    // the runtime fill them before the page mirrors them.
+    async function showSettingsPage(id, signal) {
+        await preparePage(id, signal);
+        if (signal?.aborted) return;
+        settingsPage?.dispose();
+        settingsPage = renderSettingsPage({
+            document, schema: settingsPages[id], translate: t,
+            openNative: () => openPanel(`native:${id}`, panelTitle),
+        });
+        pageSection.replaceChildren(settingsPage.element);
+        pageSection.scrollTop = 0;
     }
 
     function currentRoute() {
@@ -325,7 +406,8 @@ export function installMobileChatShell({
         changeView(target, direction);
         const action = target.view === 'roles' ? showCharacters
             : target.view === 'history' ? showHistory
-                : target.view === 'panel' ? signal => showPanel(target.panelId, signal) : null;
+                : target.view === 'panel' ? signal => showPanel(target.panelId, signal)
+                    : target.view === 'page' ? signal => showSettingsPage(target.panelId, signal) : null;
         message(action ? t('Loading…') : '');
         render();
         try {
@@ -365,6 +447,10 @@ export function installMobileChatShell({
             }
             return;
         }
+        if (settingsPages[id]) {
+            await present({ view: 'page', panelId: id, title: label });
+            return;
+        }
         await present({ view: 'panel', panelId: id, title: label });
     }
 
@@ -375,6 +461,11 @@ export function installMobileChatShell({
         }
         if (body.dataset.ttNavOpen === 'true') {
             setNavigation(false, { restoreFocus: true });
+            return true;
+        }
+        if (view === 'page' && settingsPage?.closeSheet()) return true;
+        if (view === 'roles' && closeRoleSearch()) {
+            searchButton.focus({ preventScroll: true });
             return true;
         }
         if (disposed || view === 'roles') return false;
@@ -447,17 +538,51 @@ export function installMobileChatShell({
     document.addEventListener('keydown', onKeyDown, true);
     // These controls own navigation. Avoid the native outside-tap closer
     // consuming the same gesture first and taking two back steps.
-    for (const surface of [header, tabs, actions]) {
+    for (const surface of [header, tabs, actions, fab]) {
         for (const event of ['mousedown', 'touchstart']) {
             surface.addEventListener(event, event => event.stopPropagation());
         }
     }
-    header.querySelector('#tt-chat-more').addEventListener('click', () => {
-        if (view === 'roles') void navigate('more');
-        else setActions(actions.hidden);
+    const toggleActions = (origin, items) => {
+        if (!actions.hidden && actionsOrigin === origin) setActions(false, { restoreFocus: true });
+        else openActions(items(), origin);
+    };
+    moreButton.addEventListener('click', () => toggleActions(moreButton, chatActionItems));
+    fab.addEventListener('click', () => toggleActions(fab, createActionItems));
+    const nativeSearch = () => document.getElementById('character_search_bar');
+    /** Mirror the app-bar query into the native field, which owns filtering. */
+    function syncSearch() {
+        const field = nativeSearch();
+        if (!field || field.value === searchInput.value) return;
+        field.value = searchInput.value;
+        field.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+    }
+    searchInput.addEventListener('input', syncSearch);
+    searchInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') searchInput.blur();
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeRoleSearch();
+        searchButton.focus({ preventScroll: true });
     });
-    header.querySelector('#tt-chat-search').addEventListener('click', () => {
-        document.getElementById('character_search_bar')?.focus();
+    searchButton.addEventListener('click', () => {
+        // Like Telegram's clear button: empty the query first, close when already empty.
+        if (searchingRoles && searchInput.value) {
+            searchInput.value = '';
+            syncSearch();
+            searchInput.focus({ preventScroll: true });
+            return;
+        }
+        if (searchingRoles) {
+            closeRoleSearch();
+            searchButton.focus({ preventScroll: true });
+            return;
+        }
+        searchingRoles = true;
+        searchInput.value = nativeSearch()?.value || '';
+        render();
+        searchInput.focus({ preventScroll: true });
     });
     retryButton.addEventListener('click', () => void retry?.());
     const unsubscribe = subscribeChatChanged(chatChanged);
@@ -478,13 +603,17 @@ export function installMobileChatShell({
             closePanels();
             wideScreen.removeEventListener('change', resizeNavigation);
             document.removeEventListener('keydown', onKeyDown, true);
-            header.remove(); tabs.remove(); more.remove(); scrim.remove(); actions.remove(); actionScrim.remove();
+            header.remove(); tabs.remove(); more.remove(); scrim.remove(); actions.remove(); actionScrim.remove(); fab.remove();
+            settingsPage?.dispose();
+            pageSection.remove();
             connectButton.remove();
             body.classList.remove('tt-mobile-chat-shell');
             delete body.dataset.ttChatView;
             delete body.dataset.ttNavOpen;
             delete body.dataset.ttConnected;
             delete body.dataset.ttMotion;
+            delete body.dataset.ttRolesSearch;
+            delete body.dataset.ttGroupChat;
             if (previousTheme === undefined) delete body.dataset.ttColorScheme;
             else body.dataset.ttColorScheme = previousTheme;
             chatSurface.inert = previousInert;

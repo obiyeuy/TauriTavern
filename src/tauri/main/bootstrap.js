@@ -392,7 +392,11 @@ export function bootstrapTauriMain() {
         eventSource.once(event_types.APP_READY, () => {
             void import('../../scripts/mobile-chat-shell-runtime.js')
                 .then(({ installMobileChatShellRuntime }) => installMobileChatShellRuntime())
-                .catch((error) => { console.error('TauriTavern: Failed to install mobile chat navigation:', error); });
+                .catch((error) => {
+                    // Never leave the startup screen covering a working app.
+                    document.documentElement.classList.remove('tt-mobile-booting');
+                    console.error('TauriTavern: Failed to install mobile chat navigation:', error);
+                });
         });
     }
     runAfterTauriReady(() => import('./services/dynamic-theme/install.js')
