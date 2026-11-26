@@ -1,4 +1,4 @@
 contact_links:
   - name: 提问与求助 / Questions and help
-    url: https://github.com/Darkatse/TauriTavern/discussions/categories/q-a
-    about: 使用问题请在 Discussions 提问。 / Ask usage questions in Discussions.
+    url: https://github.com/obiyeuy/TauriTavern/issues
+    about: 个人版使用问题请在本仓库记录。 / Report personal-edition issues in this repository.

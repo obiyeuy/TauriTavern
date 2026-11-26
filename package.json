@@ -1,7 +1,7 @@
 {
   "name": "tauritavern",
   "private": true,
-  "version": "2.4.0",
+  "version": "2.4.1",
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "scripts": {
@@ -40,6 +40,7 @@
     "android:dev": "node scripts/tauri-app.mjs --prepare-frontend android dev",
     "android:dev:pilot": "node scripts/tauri-app.mjs --prepare-frontend android dev --features devtools-pilot",
     "android:build": "node scripts/tauri-app.mjs --prepare-frontend android build",
+    "android:build:personal": "node scripts/build-personal-android.mjs",
     "ios:dev": "node scripts/tauri-app.mjs --prepare-frontend ios dev",
     "ios:dev:pilot": "node scripts/tauri-app.mjs --prepare-frontend ios dev --features devtools-pilot",
     "ios:build": "node scripts/tauri-app.mjs --prepare-frontend ios build",

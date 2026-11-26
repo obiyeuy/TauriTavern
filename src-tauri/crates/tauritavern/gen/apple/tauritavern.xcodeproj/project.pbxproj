@@ -163,7 +163,6 @@
 		99FA97271F823AF6556C9DA2 /* jsonl_utils.rs */ = {isa = PBXFileReference; path = jsonl_utils.rs; sourceTree = "<group>"; };
 		9C17D6564425A172908D66E1 /* summary.rs */ = {isa = PBXFileReference; path = summary.rs; sourceTree = "<group>"; };
 		9CB7A6A97E360553D8FF5AB8 /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
-		9DED68F074D1A07BE0117934 /* github_update_repository.rs */ = {isa = PBXFileReference; path = github_update_repository.rs; sourceTree = "<group>"; };
 		9E1727BCF9FF6D532E898DFC /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
 		9FEA1B2D6A1C6708A44D0458 /* settings_dto.rs */ = {isa = PBXFileReference; path = settings_dto.rs; sourceTree = "<group>"; };
 		9FEBE58D46AD8AC36BF60650 /* github.rs */ = {isa = PBXFileReference; path = github.rs; sourceTree = "<group>"; };
@@ -768,7 +767,6 @@
 		FEBDA4CB84EBE49FBBB433BA /* apis */ = {
 			isa = PBXGroup;
 			children = (
-				9DED68F074D1A07BE0117934 /* github_update_repository.rs */,
 				FCFEB4F980D70F55CB072CA3 /* miktik_tokenizer_repository.rs */,
 				9CB7A6A97E360553D8FF5AB8 /* mod.rs */,
 				D34C349AA2A65B7F1C3B6904 /* http_chat_completion_repository */,

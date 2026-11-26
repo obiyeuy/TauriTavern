@@ -1,3 +1,21 @@
+# TauriTavern Personal
+
+本仓库维护 TauriTavern 的 Android 个人版，集中改进手机界面、API 填写与保存、聊天资源可靠性和连接错误诊断。项目基于 [Darkatse/TauriTavern](https://github.com/Darkatse/TauriTavern)，保留上游历史与许可证。
+
+[个人仓库](https://github.com/obiyeuy/TauriTavern) · [开发与发布流程](docs/PersonalDevelopment.md) · [更新渠道契约](docs/CurrentState/UpdateChannels.md)
+
+个人构建使用独立包名 `com.tauritavern.personal` 和原个人签名。源码可以先保持私有；正式应用更新需要公开的个人 Releases 与已配置的发行签名，不在 APK 中嵌入 GitHub 凭据。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run check
+pnpm run android:build:personal
+```
+
+下面保留上游项目说明与平台文档入口。上游下载、软件源和社区属于原项目；个人发行的实际状态以本仓库的 Releases 与 Actions 为准。
+
+---
+
 <div align="center">
 
 <img src="docs/images/tauritavern-readme-hero.webp" alt="TauriTavern" width="720">

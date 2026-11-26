@@ -2,7 +2,17 @@
 
 TauriTavern 只维护 `stable` 与 `canary` 两个更新渠道。更新功能只负责检测和引导下载，不在应用内安装更新。
 
+启动更新检查由版本扩展在 `APP_READY` 后异步发起。更新提示来自客户端主动查询 GitHub Releases，不是服务器向手机发送推送消息；上传源码也不会直接产生可安装的更新。已展示的 Release 使用 `release_token` 去重，用户可稍后下载或手动检查。
+
 Linux 系统软件源默认使用 `stable`，并提供独立的 `canary` 套件。APT/DNF/Zypper 根据系统的软件包数据库安装更新，与应用内 Stable/Canary 偏好相互独立；软件源地址、签名身份和安装方式见 `docs/CurrentState/LinuxRepository.md`。
+
+## 更新仓库归属
+
+`TAURITAVERN_UPDATE_REPOSITORY` 是构建时的 `owner/repository` 输入。构建脚本拒绝非法路径格式，将它编译为产品身份；host composition 把唯一的 repository API root 交给 `tt-adapter-http::GitHubUpdateRepository`。未设置时沿用 `Darkatse/TauriTavern`。运行中的 API 密钥、settings 与第三方扩展不决定应用更新仓库。
+
+个人 Android 构建统一通过 `pnpm run android:build:personal`。该入口保留 `com.tauritavern.personal` 和个人产品名称，并使用显式的 `TAURITAVERN_UPDATE_REPOSITORY`、CI 的 `GITHUB_REPOSITORY` 或本地个人仓库 `obiyeuy/TauriTavern`。它仍调用项目原 Android 构建入口，没有另一套更新比较或安装逻辑。
+
+更新查询不携带 GitHub token。源码仓库可先保持私有，但供应用读取的 Releases 必须公开，且目标渠道已有发布。私有仓库、缺失 Release 或缺失 Canary tag 都可能返回 404；adapter 将请求地址、HTTP 状态和公开访问条件一起传播，不能将其解释为“没有更新”。网络、响应体读取和 JSON 解析失败也保留请求上下文。
 
 ## 身份与默认渠道
 
@@ -17,8 +27,8 @@ Linux 系统软件源默认使用 `stable`，并提供独立的 `canary` 套件�
 
 前端把有效渠道传给 `check_for_update` command，application service 决定比较语义，GitHub adapter 只负责读取渠道对应的数据：
 
-- Stable：`GET /repos/Darkatse/TauriTavern/releases/latest`
-- Canary：`GET /repos/Darkatse/TauriTavern/releases/tags/Canary` 与 `GET /repos/Darkatse/TauriTavern/commits/Canary`
+- Stable：`GET /repos/<owner>/<repository>/releases/latest`
+- Canary：`GET /repos/<owner>/<repository>/releases/tags/Canary` 与 `GET /repos/<owner>/<repository>/commits/Canary`
 
 Canary Release 必须是 prerelease；Stable latest 不能是 prerelease。返回给前端的 `release_token` 是机器去重键：Stable 使用 tag，Canary 使用 `sha12`。弹窗主要展示 Release name，因此 Canary 的时间格式由发布流水线统一产生。
 
@@ -51,3 +61,13 @@ Stable 的专用 IPA 只进入 `TauriTavern Beta Test`，Canary 的专用 IPA �
 3. 不要让 AI 决定版本、产物、发布条件或 tag；AI 只能改写已经生成的事实。
 4. 修改渠道 DTO、settings 或 command 时，保持 Rust serde 名称与前端字符串 `stable` / `canary` 一致。
 5. Public TestFlight 始终使用 `ios_external_beta`；不要把 GitHub Release 的完整更新日志直接复制成 `What to Test`。
+
+## 个人 Android 发布
+
+个人仓库使用 `.github/workflows/personal-android-release.yml`，保留上述 Stable/Canary 语义，产物范围为一个已签名 ARM64 APK、JSON 验包记录和 SHA256 文件。Stable 从 `main` 发布 `vMAJOR.MINOR.PATCH`；Canary 从 `dev` 发布固定 `Canary` tag。个人 Canary 的 `release-id` 使用 `<YYYYMMDD>-canary-<sha12>`，让同日不同构建的完整产物可以先上传，避免覆盖当前 Canary 的下载文件。标题日期来自同一构建身份，跨午夜构建不会改变标题与文件日期的对应关系。
+
+该工作流复用现有完整质量检查，再使用个人构建入口生成 APK。验包检查原包名和签名、源码提交、更新仓库、版本、ARM64、release 标志、ZIP 校验以及 ZIP/ELF 16 KiB 对齐。版本沿用 Tauri 的 `major * 1000000 + minor * 1000 + patch` 规则；Stable 发布须升版，Canary 可使用同一版本覆盖安装。发布入口读取现有两个渠道的验包记录，拒绝让新的 versionCode 低于已发布版本。
+
+首次 Release 以 draft 上传完整产物后才公开；后续 Canary 先上传新的完整产物，再更新正文，最后推进固定 tag。GitHub Release 与 Git ref 不是一个原子事务；错误时停止发布并保留具体阶段，不能宣称 tag 已推进。只在新 Canary 发布成功后清理该流水线命名范围内的旧 Canary 产物，未知附件和 Stable 历史不在清理范围内。发布入口通过有权限的 Release 列表统一发现已发布版本与草稿，同 tag 的失败草稿会在任何发布变更前阻止重试，需要核对保留产物后处理。
+
+个人仓库不执行上游的全平台发布、软件源、TestFlight、WinGet 或定时 Canary 工作流。签名仅从 `personal-android-release` 环境的 Actions secrets 注入，Git 仓库与 APK 均不包含 GitHub token 或签名私钥。公开仓库和转移现有签名到该环境需要用户明确确认；本地源码准备和验包可以先完成。操作步骤见[个人开发与发布](../PersonalDevelopment.md)。

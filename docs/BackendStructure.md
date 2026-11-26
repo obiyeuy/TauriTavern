@@ -77,7 +77,7 @@ src-tauri/
 | `tt-contracts` | DTO、事件、payload、通用值契约、observability contract |
 | `tt-ports` | repository / gateway / runtime trait、Host Resource opened-source port |
 | `tt-application` | 用例服务、业务编排、任务协调、policy 执行 |
-| `tt-adapter-http` | 共享 HTTP client pool/profile/helper |
+| `tt-adapter-http` | 共享 HTTP client pool/profile/helper、GitHub 应用更新 repository |
 | `tt-adapter-mcp` | RMCP client、协议版本策略与 Streamable HTTP lifecycle、tools/list pagination 与 tool validation |
 | `tt-adapter-provider-http` | LLM、SearXNG、SD、Translate、TTS、embedding、provider metadata 的 HTTP repository |
 | `tt-adapter-triviumdb` | 按命名空间管理 TriviumDB、阻塞执行、原生查询与持久化 |
@@ -222,9 +222,11 @@ src-tauri/crates/tauritavern/src/
 - logging / Dev observability 中需要 Tauri event 或 AppHandle 的部分。
 - Data Archive 的 Tauri file picker/share glue。
 - `file_content_repository` 与 `file_preset_repository`，因为它们仍依赖 packaged default content / bundled resources。
-- 小型 host-bound API glue，例如更新检查和外部导入下载器。
+- 外部导入下载器中需要 bundled resource 或宿主路径的 API glue。
 
 新的 Tauri-free repository 不应再放回 host infrastructure。
+
+应用更新的 GitHub 请求与 Release 解析属于 `tt-adapter-http/src/github/update_repository.rs`。host 的 `build.rs` 校验构建身份 `TAURITAVERN_UPDATE_REPOSITORY`，`product.rs` 形成 repository API root，由 composition 注入 adapter；渠道比较仍由 `tt-application::UpdateService` 负责。更新 IO 不依赖 Tauri，也不留在 host infrastructure。
 
 ### 6.4 平台事实
 
@@ -249,6 +251,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 - `tt-adapter-media` 承载浏览器可见的 avatar/background/user media 资源契约。
 - `tt-adapter-workspace-shell` 通过 `WorkspaceShell` 提供执行，经 `WorkspaceFs` 访问文件；权限、Skill 绑定、冻结宏投影与发布策略由 application 拥有。
 - `tt-adapter-provider-http`、`tt-adapter-mcp` 和 `tt-adapter-tokenization` 可以复用 `tt-adapter-http`，但协议/provider 规则不能下沉到通用 HTTP helper。
+- `tt-adapter-http` 的 `github` 模块保留共同的 GitHub HTTP 错误分类，并承载应用更新的 GitHub repository；后者实现既有 `UpdateRepository` port，不改变 pool/profile/helper 的职责，也不承载 Stable/Canary 的更新比较。
 - `tt-adapter-sync` 与 `tt-adapter-archive` 是独立运行时/执行器边界，Tauri UI glue 仍留在 host。
 
 如果一个新 adapter 只是为了两个调用点提前抽象，先不要建 crate。等它有明确 bounded context、独立依赖成本或稳定变化原因时再拆。
@@ -284,6 +287,7 @@ adapter 是外层细节，但不是可以任意堆放的 common bucket。一个 
 | LLM/SearXNG/SD/Translate/TTS/provider metadata/embedding HTTP | `tt-adapter-provider-http` | 复用 `tt-adapter-http` |
 | Vector 索引与本地 embedding runtime | `tt-adapter-vector` | 独立持久化/推理依赖，不下沉到 storage-core |
 | 通用 HTTP pool/profile/helper | `tt-adapter-http` | 不放 provider 业务规则 |
+| GitHub 应用更新 Release / commit 读取 | `tt-adapter-http/src/github/update_repository.rs` | 构建身份由 host 注入，渠道比较留在 `tt-application` |
 | LAN/TT Sync runtime | `tt-adapter-sync` | Tauri event/UI adapter 留 host composition |
 | Data Archive import/export executor | `tt-adapter-archive` | Tauri picker/share 留 host infrastructure |
 | 工作区 Shell、jq、Python 与 JavaScript 执行 | `tt-adapter-workspace-shell` | 依赖 `WorkspaceShell` / `WorkspaceFs` port，复用调用方的文件范围；不接触物理路径 |

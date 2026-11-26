@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::app::startup_profile::initial_tauritavern_settings;
-use crate::infrastructure::apis::github_update_repository::GitHubUpdateRepository;
 use crate::infrastructure::assets::read_resource_json;
 use crate::infrastructure::builtin_skills::materialize_builtin_skills;
 use crate::infrastructure::logging::llm_api_logs::{
@@ -13,7 +12,7 @@ use crate::infrastructure::paths::RuntimePaths;
 use crate::infrastructure::repositories::file_content_repository::FileContentRepository;
 use crate::infrastructure::repositories::file_preset_repository::FilePresetRepository;
 use tt_adapter_extension::FileExtensionRepository;
-use tt_adapter_http::HttpClientPool;
+use tt_adapter_http::{GitHubUpdateRepository, HttpClientPool};
 use tt_adapter_media::{
     FileAvatarRepository, FileBackgroundRepository, FileImageMetadataRepository,
 };
@@ -355,8 +354,10 @@ pub(super) async fn build(
         .cleanup_orphaned_commit_staging()
         .await;
 
-    let update_repository: Arc<dyn UpdateRepository> =
-        Arc::new(GitHubUpdateRepository::new(http_client_pool.clone()));
+    let update_repository: Arc<dyn UpdateRepository> = Arc::new(GitHubUpdateRepository::new(
+        http_client_pool.clone(),
+        crate::product::UPDATE_REPOSITORY_API_URL,
+    ));
 
     let vector_root = default_user_dir.join("vectors");
     let vector_repository: Arc<dyn VectorRepository> = Arc::new(RedbVectorRepository::new(

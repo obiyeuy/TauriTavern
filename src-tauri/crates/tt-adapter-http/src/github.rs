@@ -3,6 +3,9 @@ use serde::Deserialize;
 
 use tt_domain::errors::DomainError;
 
+mod update_repository;
+pub use update_repository::GitHubUpdateRepository;
+
 pub const GITHUB_RATE_LIMIT_MESSAGE: &str = "GitHub has rate-limited your requests. Please try again later, or change your network and try again.";
 
 const GITHUB_RATE_LIMIT_TOKENS: [&str; 2] = ["rate limit", "abuse detection"];

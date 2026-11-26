@@ -16,6 +16,7 @@ fn main() {
     let needs_embedded_resources =
         embedded_resources || std::env::var_os("CARGO_FEATURE_PORTABLE").is_some();
     emit_ios_factory_profile();
+    emit_update_repository();
 
     // These are the frontend/resource directories that feed generated Rust artifacts.
     println!("cargo:rerun-if-changed=../../../default/content");
@@ -69,6 +70,33 @@ fn emit_ios_factory_profile() {
         _ => panic!("Unsupported TAURITAVERN_IOS_POLICY_PROFILE: {profile:?}"),
     }
     println!("cargo:rustc-env=TAURITAVERN_IOS_POLICY_PROFILE={profile}");
+}
+
+fn emit_update_repository() {
+    println!("cargo:rerun-if-env-changed=TAURITAVERN_UPDATE_REPOSITORY");
+    let repository = match std::env::var("TAURITAVERN_UPDATE_REPOSITORY") {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => "Darkatse/TauriTavern".to_string(),
+        Err(error) => panic!("Invalid TAURITAVERN_UPDATE_REPOSITORY: {error}"),
+    };
+    let repository = repository.trim();
+    let parts: Vec<_> = repository.split('/').collect();
+    assert!(
+        parts.len() == 2
+            && !parts[0].is_empty()
+            && parts[0].len() <= 39
+            && parts[0]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && !parts[1].is_empty()
+            && parts[1].len() <= 100
+            && !matches!(parts[1], "." | "..")
+            && parts[1]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte)),
+        "TAURITAVERN_UPDATE_REPOSITORY must be a GitHub owner/repository, received {repository:?}"
+    );
+    println!("cargo:rustc-env=TAURITAVERN_UPDATE_REPOSITORY={repository}");
 }
 
 fn emit_git_build_metadata() {

@@ -1,0 +1,222 @@
+name: Personal Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        type: choice
+        options: [canary, stable]
+        default: canary
+      tag:
+        description: Stable tag (for example v2.4.1); leave empty for Canary
+        required: false
+        type: string
+
+concurrency:
+  group: personal-android-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.identity.outputs.channel }}
+      version: ${{ steps.identity.outputs.version }}
+      release_id: ${{ steps.identity.outputs.release_id }}
+      source_revision: ${{ steps.identity.outputs.source_revision }}
+      build_branch: ${{ steps.identity.outputs.build_branch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate public repository and release identity
+        id: identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          private=$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)
+          if [[ "$private" != false ]]; then
+            echo "::error::The app reads public releases without authentication. Approve public repository visibility before publishing an app update."
+            exit 1
+          fi
+          version=$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")
+          node scripts/ci/verify-release-version.mjs "v$version"
+          source_revision=$(git rev-parse HEAD)
+          test "$source_revision" = "$GITHUB_SHA"
+          if [[ "$RELEASE_CHANNEL" == stable ]]; then
+            test "$GITHUB_REF_NAME" = main
+            test "$REQUESTED_TAG" = "v$version"
+            test -f "docs/releases/$version.md"
+            release_id=$version
+            build_branch=main
+          elif [[ "$RELEASE_CHANNEL" == canary ]]; then
+            test "$GITHUB_REF_NAME" = dev
+            test -z "$REQUESTED_TAG"
+            release_id="$(TZ=Asia/Shanghai date +%Y%m%d)-canary-${source_revision:0:12}"
+            build_branch=dev
+          else
+            echo "::error::Unknown release channel"
+            exit 1
+          fi
+          {
+            echo "channel=$RELEASE_CHANNEL"
+            echo "version=$version"
+            echo "release_id=$release_id"
+            echo "source_revision=$source_revision"
+            echo "build_branch=$build_branch"
+          } >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: prepare
+    uses: ./.github/workflows/pr-quality-gate.yml
+
+  android:
+    needs: [prepare, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: personal-android-release
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+      TAURITAVERN_UPDATE_REPOSITORY: ${{ github.repository }}
+      TAURITAVERN_BUILD_BRANCH: ${{ needs.prepare.outputs.build_branch }}
+      TAURITAVERN_BUILD_REVISION: ${{ needs.prepare.outputs.source_revision }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source_revision }}
+
+      - name: Install Android host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: gradle
+          cache-dependency-path: |
+            src-tauri/crates/tauritavern/gen/android/**/*.gradle*
+            src-tauri/crates/tauritavern/gen/android/**/gradle-wrapper.properties
+
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools platforms;android-36 build-tools;36.0.0
+
+      - name: Setup Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+          link-to-sdk: true
+
+      - name: Configure Android compiler
+        shell: bash
+        env:
+          NDK_PATH: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          toolchain="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
+          {
+            echo "NDK_HOME=$NDK_PATH"
+            echo "AR_aarch64_linux_android=$toolchain/bin/llvm-ar"
+            echo "CC_aarch64_linux_android=$toolchain/bin/aarch64-linux-android26-clang"
+            echo "CXX_aarch64_linux_android=$toolchain/bin/aarch64-linux-android26-clang++"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$toolchain/bin/aarch64-linux-android26-clang"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$toolchain/sysroot"
+          } >> "$GITHUB_ENV"
+
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Setup existing personal Android signing
+        env:
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+        run: node scripts/ci/setup-android-signing.mjs
+
+      - name: Build personal ARM64 APK
+        run: pnpm run android:build:personal --verbose
+
+      - name: Verify signed APK and create release assets
+        env:
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          SOURCE_REVISION: ${{ needs.prepare.outputs.source_revision }}
+        run: |
+          python3 scripts/ci/verify-personal-apk.py \
+            src-tauri/crates/tauritavern/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+            release-assets \
+            --release-id "$RELEASE_ID" \
+            --channel "$RELEASE_CHANNEL" \
+            --source-revision "$SOURCE_REVISION" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: personal-android-${{ needs.prepare.outputs.source_revision }}
+          path: |
+            release-assets/*.apk
+            release-assets/*.manifest.json
+            release-assets/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove job signing files
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/keystore.jks" \
+            src-tauri/crates/tauritavern/gen/android/keystore.properties
+
+  publish:
+    needs: [prepare, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.source_revision }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: personal-android-${{ needs.prepare.outputs.source_revision }}
+          path: release-assets
+
+      - name: Publish only verified assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          SOURCE_REVISION: ${{ needs.prepare.outputs.source_revision }}
+        run: node scripts/ci/publish-personal-release.mjs release-assets

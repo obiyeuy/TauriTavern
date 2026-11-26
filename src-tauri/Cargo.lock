@@ -8592,7 +8592,7 @@ dependencies = [
 
 [[package]]
 name = "tauritavern"
-version = "2.4.0"
+version = "2.4.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -9258,6 +9258,7 @@ dependencies = [
 name = "tt-adapter-http"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "rcgen 0.14.10",
  "reqwest",
  "rustls",
