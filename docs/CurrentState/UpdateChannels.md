@@ -4,11 +4,11 @@ TauriTavern 只维护 `stable` 与 `canary` 两个更新渠道。更新功能只
 
 启动更新检查由版本扩展在 `APP_READY` 后异步发起。更新提示来自客户端主动查询 GitHub Releases，不是服务器向手机发送推送消息；上传源码也不会直接产生可安装的更新。已展示的 Release 使用 `release_token` 去重，用户可稍后下载或手动检查。
 
-Linux 系统软件源默认使用 `stable`，并提供独立的 `canary` 套件。APT/DNF/Zypper 根据系统的软件包数据库安装更新，与应用内 Stable/Canary 偏好相互独立；软件源地址、签名身份和安装方式见 `docs/CurrentState/LinuxRepository.md`。
+保留的上游 Linux 软件源使用独立的 Stable/Canary 套件，与应用内渠道偏好相互独立。本个人 fork 当前不运营 APT/RPM 软件源；源码构建与发行边界见 `docs/CurrentState/LinuxRepository.md`。
 
 ## 更新仓库归属
 
-`TAURITAVERN_UPDATE_REPOSITORY` 是构建时的 `owner/repository` 输入。构建脚本拒绝非法路径格式，将它编译为产品身份；host composition 把唯一的 repository API root 交给 `tt-adapter-http::GitHubUpdateRepository`。未设置时沿用 `Darkatse/TauriTavern`。运行中的 API 密钥、settings 与第三方扩展不决定应用更新仓库。
+`TAURITAVERN_UPDATE_REPOSITORY` 是构建时的 `owner/repository` 输入。构建脚本拒绝非法路径格式，将它编译为产品身份；host composition 把唯一的 repository API root 交给 `tt-adapter-http::GitHubUpdateRepository`。本 fork 未设置时使用 `obiyeuy/TauriTavern`；自定义发行可显式覆盖该构建输入。运行中的 API 密钥、settings 与第三方扩展不决定应用更新仓库。
 
 个人 Android 构建统一通过 `pnpm run android:build:personal`。该入口保留 `com.tauritavern.personal` 和个人产品名称，并使用显式的 `TAURITAVERN_UPDATE_REPOSITORY`、CI 的 `GITHUB_REPOSITORY` 或本地个人仓库 `obiyeuy/TauriTavern`。它仍调用项目原 Android 构建入口，没有另一套更新比较或安装逻辑。
 
@@ -32,7 +32,9 @@ Linux 系统软件源默认使用 `stable`，并提供独立的 `canary` 套件�
 
 Canary Release 必须是 prerelease；Stable latest 不能是 prerelease。返回给前端的 `release_token` 是机器去重键：Stable 使用 tag，Canary 使用 `sha12`。弹窗主要展示 Release name，因此 Canary 的时间格式由发布流水线统一产生。
 
-## Canary 发布链路
+## 保留的上游 Canary 发布链路
+
+本节与下节记录继承的全平台发布契约，相关工作流在个人仓库保持禁用。个人发行使用后面的“个人 Android 发布”入口。
 
 Windows 与 macOS 的 Stable、Canary debug 包均启用 Tauri Pilot；常规 release 构建默认不启用。
 
@@ -46,7 +48,7 @@ Stable 的 `release-id` 是版本号；Canary 使用 `<YYYYMMDD>-canary`，日�
 
 Release notes 先由 Git 历史生成确定性上下文和回退正文。独立的只读 Codex job 使用 `CANARY_CODEX_API_KEY`、`CANARY_CODEX_RESPONSES_ENDPOINT`、`CANARY_CODEX_MODEL` 与 `CANARY_CODEX_EFFORT` secrets 检查实际 diff，再通过项目专用 Skill 撰写中英双语正文。Skill 源文件保存在不会被本地 Codex 自动发现的 `.github/codex/skills/`，CI 只把它们复制到 runner 临时 `CODEX_HOME`。Codex 调用失败或输出不符合结构时直接使用确定性正文，不影响构建和发布。
 
-## Public TestFlight
+## 保留的上游 Public TestFlight
 
 Stable 与 Canary 原有的自签 iOS IPA 保持原构建参数和 Release 文件名。iOS job 在普通 IPA 完成后，复用已生成的前端资源额外构建 `ios_external_beta` + App Store Connect 版本，并以 `-TestFlight.ipa` 后缀作为独立产物。完整 GitHub Release 产物发布成功后，共享的 `.github/workflows/public-testflight.yml` 才上传并分发该专用 IPA；成功进入 TestFlight 流程后，再从 GitHub Release 删除临时的 `-TestFlight.ipa`，普通自签 IPA 始终保留。
 

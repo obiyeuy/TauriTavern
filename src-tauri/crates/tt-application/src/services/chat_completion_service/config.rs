@@ -46,8 +46,8 @@ const XAI_API_BASE: &str = "https://api.x.ai/v1";
 const POLLINATIONS_API_BASE: &str = "https://gen.pollinations.ai/v1";
 const POLLINATIONS_API_BASE_ANONYMOUS: &str = "https://text.pollinations.ai/v1";
 const POLLINATIONS_STATUS_API_BASE: &str = "https://gen.pollinations.ai/text";
-const OPENROUTER_REFERER: &str = "https://tauritavern.github.io";
-const OPENROUTER_TITLE: &str = "TauriTavern";
+const OPENROUTER_REFERER: &str = "https://github.com/obiyeuy/TauriTavern";
+const OPENROUTER_TITLE: &str = "TauriTavern Personal";
 const OPENROUTER_CATEGORIES: &str = "roleplay,general-chat";
 
 const ZAI_ENDPOINT_CODING: &str = "coding";

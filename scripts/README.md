@@ -2,38 +2,27 @@
 
 这个目录存放仓库内的开发、构建、迁移导出与 CI 辅助脚本。
 
-## Linux 一键安装
+## 个人 Android 构建与发行
 
-`install-linux.sh` 为 Debian 12+、Ubuntu 22.04 LTS+、Fedora 与 openSUSE Leap 16.0 配置签名软件源，并安装或更新 TauriTavern：
+`pnpm run android:build:personal` 调用 `build-personal-android.mjs`，复用现有 Tauri Android 构建路径并设置个人包名与更新来源。共享签名、验包与 Release 发布脚本位于 `ci/`。
 
-```sh
-curl -fsSL https://get.tauritavern.com/linux.sh | sh
-```
+SDK、签名与发布步骤见[个人开发与发布](../docs/PersonalDevelopment.md)。
 
-使用 Canary 渠道：
+## Linux 源码构建
 
-```sh
-curl -fsSL https://get.tauritavern.com/linux.sh \
-  | sh -s -- --channel canary
-```
-
-NixOS 会自动使用项目 flake；其他已经安装 Nix 的 Linux 可显式选择 Nix：
+本 fork 的 Linux 源码构建使用自己的 Nix flake：
 
 ```sh
-curl -fsSL https://get.tauritavern.com/linux.sh \
-  | sh -s -- --method nix
+nix build github:obiyeuy/TauriTavern#tauritavern
 ```
 
-Nix 安装进入当前用户 profile，不使用 sudo，也不修改 `/etc/nix/nix.conf`。脚本使用 POSIX `sh` 语法，可由 sh、Dash、Bash 或 Zsh 执行。运行前可先下载并检查内容，或使用 `--dry-run` 查看识别结果和执行计划：
+也可在已克隆的源码中查看 Nix 安装计划：
 
 ```sh
-curl -fsSL \
-  https://get.tauritavern.com/linux.sh \
-  -o install-tauritavern.sh
-sh install-tauritavern.sh --dry-run
+sh scripts/install-linux.sh --method nix --dry-run
 ```
 
-原生软件源安装会核对完整的 OpenPGP 主密钥和签名子密钥指纹。Nix 安装接受项目 flake 声明的 binary cache；multi-user Nix 仍要求 daemon 预先信任该 cache，否则可能回退到本地构建。
+`install-linux.sh` 中保留的 APT/RPM 模式服务于上游发行基础设施；本个人 fork 未提供这些软件源。Nix 模式使用本 fork 的源码与系统已有的 cache 配置，不新增上游缓存信任。详见 [Linux 源码构建](../docs/CurrentState/LinuxRepository.md)。
 
 ## SillyTavern 迁移导出
 
@@ -43,22 +32,6 @@ sh install-tauritavern.sh --dry-run
 - 可选是否导出 `data/default-user/backups`
 - 自动将 `public/scripts/extensions/third-party` 映射到 `data/extensions/third-party`
 - 提供明显的压缩进度提示
-
-### 一键执行
-
-一键执行需要在可交互终端中运行；脚本通过终端读取选项，避免与 `curl | sh` 的脚本输入流冲突。
-
-Unix / macOS / Linux / Termux:
-
-```sh
-curl -fsSL https://get.tauritavern.com/export.sh | sh
-```
-
-Windows PowerShell:
-
-```powershell
-iex (iwr 'https://get.tauritavern.com/export.ps1').Content
-```
 
 ### 本地执行
 
@@ -80,7 +53,9 @@ Flatpak 构建配方位于 `packaging/flatpak/`，软件源发布工具位于
 `distribution/`。
 
 - `install-linux.sh`
-  通过受支持的 APT/RPM 软件源或 Nix flake 安装 TauriTavern。
+  Nix 模式构建本 fork；保留的 APT/RPM 模式属于上游基础设施。
+- `build-personal-android.mjs`
+  个人 Android 包的构建入口，对应 `pnpm run android:build:personal`。
 - `export-sillytavern-migration.sh`
   面向 Unix/macOS/Linux/Termux 的 SillyTavern 迁移导出脚本。
 - `export-sillytavern-migration.ps1`
@@ -109,6 +84,8 @@ Flatpak 构建配方位于 `packaging/flatpak/`，软件源发布工具位于
   校验 Stable Release tag 与前端、Cargo、Tauri、Cargo lock 和 Nix 包版本一致。
 - `ci/collect-release-assets.mjs`
   校验必需的跨平台构建产物，并按 Stable 与 Canary 共用的用户可见命名契约收集 Release 资产。实验性的鸿蒙 HAP 是可选产物，存在时才收集。
+- `ci/setup-android-signing.mjs`、`ci/verify-personal-apk.py`、`ci/publish-personal-release.mjs`
+  个人发行的签名初始化、APK 身份核验与 GitHub Release 发布。
 - `ci/distribute-testflight.mjs`
   等待 App Store Connect 处理指定 iOS 构建，写入 `What to Test`，关联公开外测组，并按当前状态提交 Beta App Review。
 - `ohos/`

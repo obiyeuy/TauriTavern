@@ -183,7 +183,7 @@ test('Linux installer rejects versions outside the documented support range', ()
     }
 });
 
-test('Linux installer automatically selects the flake on NixOS', () => {
+test('Linux installer selects this fork’s flake on NixOS', () => {
     const result = runDryRun({
         osRelease: 'ID=nixos\nVERSION_ID="26.05"\nPRETTY_NAME="NixOS 26.05"\n',
         architecture: 'x86_64',
@@ -192,8 +192,7 @@ test('Linux installer automatically selects the flake on NixOS', () => {
     assert.equal(result.status, 0, result.output);
     assert.match(result.output, /Install method\s+nix/);
     assert.match(result.output, /Architecture\s+x86_64-linux/);
-    assert.match(result.output, /github:Darkatse\/TauriTavern#tauritavern/);
-    assert.match(result.output, /nix-cache\.tauritavern\.com/);
+    assert.match(result.output, /github:obiyeuy\/TauriTavern#tauritavern/);
 });
 
 test('Linux installer can explicitly select Nix on another distribution', () => {
@@ -228,7 +227,7 @@ test('Linux installer maps Canary to every supported package system', () => {
         {
             release: 'ID=nixos\nVERSION_ID="26.05"\nPRETTY_NAME="NixOS 26.05"\n',
             architecture: 'x86_64',
-            expected: /github:Darkatse\/TauriTavern\/Canary#canary/,
+            expected: /github:obiyeuy\/TauriTavern\/Canary#canary/,
         },
     ];
 

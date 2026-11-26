@@ -76,7 +76,7 @@ fn emit_update_repository() {
     println!("cargo:rerun-if-env-changed=TAURITAVERN_UPDATE_REPOSITORY");
     let repository = match std::env::var("TAURITAVERN_UPDATE_REPOSITORY") {
         Ok(value) => value,
-        Err(std::env::VarError::NotPresent) => "Darkatse/TauriTavern".to_string(),
+        Err(std::env::VarError::NotPresent) => "obiyeuy/TauriTavern".to_string(),
         Err(error) => panic!("Invalid TAURITAVERN_UPDATE_REPOSITORY: {error}"),
     };
     let repository = repository.trim();

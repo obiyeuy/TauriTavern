@@ -354,9 +354,9 @@ impl VectorService {
                 headers: HashMap::from([
                     (
                         "HTTP-Referer".to_string(),
-                        "https://tauritavern.github.io".to_string(),
+                        "https://github.com/obiyeuy/TauriTavern".to_string(),
                     ),
-                    ("X-Title".to_string(), "TauriTavern".to_string()),
+                    ("X-Title".to_string(), "TauriTavern Personal".to_string()),
                 ]),
             },
             VectorSource::Chutes => RemoteEmbeddingProtocol::OpenAi {

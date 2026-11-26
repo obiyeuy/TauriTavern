@@ -10,10 +10,10 @@
     <p>It provides local data storage, character and chat management, and Chat Completion integrations without requiring a Node.js runtime.</p>
   </description>
   <launchable type="desktop-id">TauriTavern.desktop</launchable>
-  <url type="homepage">https://github.com/Darkatse/TauriTavern</url>
-  <url type="bugtracker">https://github.com/Darkatse/TauriTavern/issues</url>
+  <url type="homepage">https://github.com/obiyeuy/TauriTavern</url>
+  <url type="bugtracker">https://github.com/obiyeuy/TauriTavern/issues</url>
   <developer id="com.tauritavern">
-    <name>TauriTavern Team</name>
+    <name>obiyeuy · TauriTavern Personal</name>
   </developer>
   <content_rating type="oars-1.1" />
 </component>

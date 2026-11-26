@@ -2,6 +2,8 @@
 
 个人源码仓库为 [`obiyeuy/TauriTavern`](https://github.com/obiyeuy/TauriTavern)，上游为 [`Darkatse/TauriTavern`](https://github.com/Darkatse/TauriTavern)。保留上游 Git 历史、AGPL-3.0 许可证与贡献说明。
 
+本 fork 当前只开发、验证和发布 Android ARM64 APK。
+
 ## 分支与提交
 
 - `origin` 指向个人仓库，`upstream` 用于读取上游。
@@ -24,7 +26,7 @@ git fetch upstream
 
 ## 验证
 
-沿用项目的完整入口：
+开发与 CI 使用 `.node-version` 指定的 Node.js 24 LTS 和 pnpm 11，沿用项目的完整入口：
 
 ```sh
 pnpm install --frozen-lockfile
@@ -33,13 +35,15 @@ pnpm run check
 
 Rust 改动先运行受影响 crate 的 focused tests 和 `node scripts/check-rust-crate-boundaries.mjs`。性能改动保存同条件的前后测量，并说明测量范围。设备验证至少记录安装包身份、覆盖安装结果、启动状态，以及所修改流程的实际结果。
 
-`PR quality gate` 同时支持 PR、手动执行和发布工作流调用，复用同一套桌面与移动检查。API 响应或本机缺失工具造成失败时，应报告具体原因；不以跳过项目检查代替通过。当前开发 Mac 缺少 Xcode 的 `actool` 时，图标检查会失败，GitHub macOS runner 可提供独立的完整编译环境；是否通过以 Actions 的实际结果为准。
+`PR quality gate` 同时支持 PR、手动执行和发布工作流调用，仅运行两项安卓质量门控：`checks-android` 在 Linux runner 上执行完整的 `pnpm run check`；`cargo-check-android` 使用 NDK r29 检查 `aarch64-linux-android` 目标。Linux 是检查环境，发行产物为安卓 APK。实际失败须记录具体原因和失败步骤，是否通过以 Actions 的真实结果为准。
+
+Node.js 22 将 `--test-timeout=60000` 应用到整个测试文件，多用例的浏览器文件会因累计时间超限被取消。Node.js 24 将该限制应用到具体用例。本仓库统一使用 Node.js 24，保留 60 秒限制与原完整测试内容；测试文件中多个独立用例的时间不再共用一个文件预算。
 
 私有仓库的分支保护能力取决于 GitHub 账户套餐。没有生效的保护不能称为已配置；本地授权与 PR 审阅要求仍需遵守。
 
 ## Android 构建与安装
 
-准备项目支持的 Node、Rust、JDK 21、Android SDK 36 与 NDK r29，以及原个人签名材料后，使用同一构建入口：
+准备 Node.js 24、Rust、JDK 21、Android SDK 36 与 NDK r29，以及原个人签名材料后，使用同一构建入口：
 
 ```sh
 pnpm run android:build:personal
@@ -56,6 +60,8 @@ adb install -r <已验包的APK路径>
 安装前必须核对签名和包名；签名不一致时停止，不通过卸载或清数据绕开。已安装 2.4.0 的个人版可升级到 2.4.1 / versionCode 2004001。具体第三方 API、角色卡图片与 MVU 兼容仍按实际设备响应验收。
 
 ## GitHub 更新发布
+
+本 fork 的默认更新仓库为 `obiyeuy/TauriTavern`。所有普通构建和个人构建沿用该归属；需要另一发行仓库时通过构建输入 `TAURITAVERN_UPDATE_REPOSITORY` 明确指定。关于页、欢迎页、扩展主页和文档入口指向本个人项目，原作者署名保留为来源信息。
 
 更新检查从公开 GitHub Releases 读取版本和提交。私有源码仓库中的匿名查询会得到 404，因此源码上传成功不表示应用更新已启用。
 

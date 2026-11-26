@@ -81,7 +81,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   meta = {
     description = "SillyTavern frontend and ecosystem rebuilt as a native Tauri application";
-    homepage = "https://github.com/Darkatse/TauriTavern";
+    homepage = "https://github.com/obiyeuy/TauriTavern";
     license = lib.licenses.agpl3Only;
     mainProgram = "tauritavern";
     platforms = [

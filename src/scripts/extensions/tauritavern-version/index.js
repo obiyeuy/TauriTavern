@@ -17,11 +17,11 @@ import { extractErrorText, toUserFacingErrorText } from '../../util/user-facing-
 import { getActiveIosPolicyCapabilities } from '../../tauritavern/ios-policy.js';
 
 const MODULE_NAME = 'tauritavern-version';
+const REPOSITORY_URL = 'https://github.com/obiyeuy/TauriTavern';
 const LINKS = Object.freeze({
-    authorName: 'Darkatse',
-    repositoryUrl: 'https://github.com/Darkatse/TauriTavern',
-    discordUrl: 'https://discord.gg/hn57aFGe8h',
-    telegramUrl: 'https://t.me/TauriTavern',
+    maintainerName: 'obiyeuy',
+    repositoryUrl: REPOSITORY_URL,
+    issuesUrl: `${REPOSITORY_URL}/issues`,
 });
 
 const UNKNOWN_VALUE = 'UNKNOWN';
@@ -616,18 +616,6 @@ jQuery(async () => {
             throw new Error('[TauriTavern][iOSPolicy] ttv-compat-row not found');
         }
         compatRow.hidden = true;
-
-        const discordLink = document.getElementById('ttv-discord-link');
-        if (!(discordLink instanceof HTMLElement)) {
-            throw new Error('[TauriTavern][iOSPolicy] ttv-discord-link not found');
-        }
-        discordLink.hidden = true;
-
-        const telegramLink = document.getElementById('ttv-telegram-link');
-        if (!(telegramLink instanceof HTMLElement)) {
-            throw new Error('[TauriTavern][iOSPolicy] ttv-telegram-link not found');
-        }
-        telegramLink.hidden = true;
     } else {
         $('#tauritavern_check_update').on('click', onCheckUpdateClick);
     }

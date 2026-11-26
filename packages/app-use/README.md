@@ -117,10 +117,11 @@ build` writes ESM and type declarations to `dist`. Packing runs this build, and
 - Real-browser iframe checks: run `node tests/browser/build-app-use.mjs` from the
   repository root.
 
-The version is independent of TauriTavern. To release, bump `version` and push
-the tag `app-use-v<VERSION>`. `.github/workflows/app-use-release.yml` then
-publishes through npm trusted publishing and needs no npm token. On npm, the
-trusted publisher is bound to `Darkatse/TauriTavern` and that workflow file;
-renaming the file or moving the repository requires updating the npm setting.
+The version is independent of TauriTavern. This fork uses the package locally
+through the workspace. `.github/workflows/app-use-release.yml` remains disabled:
+the inherited npm namespace and trusted-publisher configuration belong to the
+upstream project. Publishing from this fork requires an authorized npm namespace
+and a trusted publisher configured for `obiyeuy/TauriTavern` and that workflow.
+Only after that setup should an `app-use-v<VERSION>` tag initiate publication.
 
 AGPL-3.0-only. Cursor motion keeps its upstream MIT attribution in the source.

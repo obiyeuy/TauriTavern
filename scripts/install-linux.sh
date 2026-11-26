@@ -1,10 +1,10 @@
 #!/bin/sh
 
-# TauriTavern Linux installer.
+# Linux installer retained from upstream; APT/RPM installs use its infrastructure.
+# Nix installs build this fork's source.
 #
 # Usage:
-#   curl -fsSL https://get.tauritavern.com/linux.sh | sh
-#   sh scripts/install-linux.sh --dry-run
+#   sh scripts/install-linux.sh --method nix --dry-run
 #
 # Keep all side effects behind main(). A truncated download therefore cannot run
 # a partially received installer.
@@ -15,8 +15,7 @@ REPOSITORY_ORIGIN="https://packages.tauritavern.com"
 PACKAGE_NAME="tauri-tavern"
 PRIMARY_KEY_FINGERPRINT="C75284E78972F19A0DDD88C487F5B8530682A857"
 SIGNING_KEY_FINGERPRINT="D609D0B174E0073BB3980A1BEDC6CEF924B6C529"
-NIX_INSTALLABLE="${TAURITAVERN_NIX_INSTALLABLE:-github:Darkatse/TauriTavern#tauritavern}"
-NIX_CACHE="https://nix-cache.tauritavern.com"
+NIX_INSTALLABLE="${TAURITAVERN_NIX_INSTALLABLE:-github:obiyeuy/TauriTavern#tauritavern}"
 
 DRY_RUN=0
 NO_COLOR_REQUESTED=0
@@ -85,7 +84,8 @@ print_step() {
 
 usage() {
     cat <<'EOF'
-Install TauriTavern through its native package repository or Nix flake.
+Install this fork through its Nix flake.
+The retained native APT/RPM mode uses the upstream distribution infrastructure.
 
 Usage:
   install-linux.sh [--channel stable|canary] [--method auto|native|nix]
@@ -107,7 +107,7 @@ Supported systems:
   Nix / NixOS             x86_64-linux, aarch64-linux
 
 Native installs verify the complete OpenPGP primary and signing-subkey
-fingerprints. Nix installs use the flake and its signed binary cache.
+fingerprints. Nix installs use this fork's flake and the system's configured caches.
 EOF
 }
 
@@ -198,9 +198,9 @@ parse_arguments() {
 
     if [ -z "${TAURITAVERN_NIX_INSTALLABLE:-}" ]; then
         if [ "$CHANNEL" = "canary" ]; then
-            NIX_INSTALLABLE="github:Darkatse/TauriTavern/Canary#canary"
+            NIX_INSTALLABLE="github:obiyeuy/TauriTavern/Canary#canary"
         else
-            NIX_INSTALLABLE="github:Darkatse/TauriTavern#tauritavern"
+            NIX_INSTALLABLE="github:obiyeuy/TauriTavern#tauritavern"
         fi
     fi
 }
@@ -589,9 +589,8 @@ print_plan() {
 
     if [ "$PACKAGE_SYSTEM" = "nix" ]; then
         printf '%-16s %s\n' "Flake" "$NIX_INSTALLABLE"
-        printf '%-16s %s\n' "Binary cache" "$NIX_CACHE"
         printf '\nThe installer will add TauriTavern to the current user Nix profile.\n'
-        printf 'The Nix daemon must trust the cache; otherwise Nix may build locally.\n'
+        printf 'This fork uses the system Nix cache configuration and may build locally.\n'
     else
         case "$PACKAGE_SYSTEM" in
             apt)

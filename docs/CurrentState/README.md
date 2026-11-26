@@ -22,8 +22,8 @@
 | [日志](LoggingObservability.md) | tracing、Dev API 与 LLM 请求日志 |
 | [资源缓存](HostResourceCaching.md) | 资源版本与条件请求 |
 | [更新渠道](UpdateChannels.md) | Stable、Canary 与更新检测 |
-| [Linux 分发](LinuxRepository.md) | APT、RPM 与 Nix |
-| [Windows 分发](WindowsDistribution.md) | WinGet 与安装包 |
+| [Linux 源码构建](LinuxRepository.md) | 个人 Nix flake 与软件源边界 |
+| [Windows 分发](WindowsDistribution.md) | 保留的 WinGet 与安装包契约 |
 | [MCP](MCP.md) | 服务器、工具目录与模型调用 |
 | [向量 API](VectorApi.md) | 索引、embedding 与查询 |
 | [自有界面](FirstPartyUI.md) | React、TypeScript 与构建流程 |

@@ -146,15 +146,15 @@ gpg --batch --homedir "$GNUPG_HOME" --armor \
     die "unable to export Flatpak repository public key"
 
 flatpak build-update-repo \
-    --comment="Official TauriTavern Flatpak repository" \
+    --comment="TauriTavern Personal Flatpak repository" \
     --default-branch="$APP_BRANCH" \
-    --description="Official stable Flatpak builds of TauriTavern" \
+    --description="Flatpak builds of the obiyeuy TauriTavern fork" \
     --generate-static-deltas \
     --gpg-homedir="$GNUPG_HOME" \
     --gpg-import="$public_key" \
     --gpg-sign="$LINUX_REPOSITORY_SIGNING_FPR" \
-    --homepage="https://github.com/Darkatse/TauriTavern" \
-    --title="TauriTavern" \
+    --homepage="https://github.com/obiyeuy/TauriTavern" \
+    --title="TauriTavern Personal" \
     "$repository_dir"
 
 [[ -s "$repository_dir/summary" && -s "$repository_dir/summary.sig" ]] ||
@@ -164,11 +164,11 @@ gpg_key="$(base64 --wrap=0 "$public_key")"
 {
     printf '%s\n' \
         "[Flatpak Repo]" \
-        "Title=TauriTavern" \
-        "Comment=Official TauriTavern Flatpak repository" \
-        "Description=Official stable Flatpak builds of TauriTavern" \
+        "Title=TauriTavern Personal" \
+        "Comment=TauriTavern Personal Flatpak repository" \
+        "Description=Flatpak builds of the obiyeuy TauriTavern fork" \
         "Url=${REPOSITORY_URL}/repo/" \
-        "Homepage=https://github.com/Darkatse/TauriTavern" \
+        "Homepage=https://github.com/obiyeuy/TauriTavern" \
         "DefaultBranch=${APP_BRANCH}" \
         "GPGKey=${gpg_key}"
 } >"$descriptor"

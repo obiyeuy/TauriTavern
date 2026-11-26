@@ -19,8 +19,8 @@
                     <strong id="tauritavern_git_info">Loading...</strong>
                 </div>
                 <div class="ttv-row">
-                    <span class="ttv-label" data-i18n="ttv_version.author_label">Author</span>
-                    <strong>{{authorName}}</strong>
+                    <span class="ttv-label" data-i18n="ttv_version.maintainer_label">Maintainer</span>
+                    <strong>{{maintainerName}}</strong>
                 </div>
                 <div id="ttv-channel-row" class="ttv-channel-block">
                     <button id="ttv-channel-toggle" class="ttv-row ttv-channel-toggle" type="button" aria-expanded="false" aria-controls="ttv-channel-body">
@@ -100,28 +100,15 @@
                         <i class="fa-brands fa-github" aria-hidden="true"></i>
                     </a>
                     <a
-                        id="ttv-discord-link"
                         class="menu_button menu_button_icon"
-                        href="{{discordUrl}}"
+                        href="{{issuesUrl}}"
                         target="_blank"
                         rel="noopener noreferrer"
-                        title="Discord Server"
-                        aria-label="Discord Server"
-                        data-i18n="[title]ttv_version.discord_updates;[aria-label]ttv_version.discord_updates"
+                        title="Report an Issue"
+                        aria-label="Report an Issue"
+                        data-i18n="[title]ttv_version.report_issue;[aria-label]ttv_version.report_issue"
                     >
-                        <i class="fa-brands fa-discord" aria-hidden="true"></i>
-                    </a>
-                    <a
-                        id="ttv-telegram-link"
-                        class="menu_button menu_button_icon"
-                        href="{{telegramUrl}}"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title="Telegram Channel"
-                        aria-label="Telegram Channel"
-                        data-i18n="[title]ttv_version.telegram;[aria-label]ttv_version.telegram"
-                    >
-                        <i class="fa-brands fa-telegram" aria-hidden="true"></i>
+                        <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
                     </a>
                 </div>
                 <button id="tauritavern_export_debug_bundle" class="menu_button menu_button_icon" type="button">

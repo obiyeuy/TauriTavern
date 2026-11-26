@@ -1,16 +1,7 @@
 {
-  description = "TauriTavern native Nix package";
+  description = "TauriTavern personal fork source package";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
-
-  nixConfig = {
-    extra-substituters = [
-      "https://nix-cache.tauritavern.com"
-    ];
-    extra-trusted-public-keys = [
-      "nix-cache.tauritavern.com-1:mOl/sCsfndubNIhnLODjA7GPqk1qw5iknbayZLRn92U="
-    ];
-  };
 
   outputs =
     {

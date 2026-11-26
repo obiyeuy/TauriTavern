@@ -1,5 +1,7 @@
 # Windows 分发现状
 
+本个人 fork 当前只开发、验证和发布 Android ARM64 APK。下面保留继承的 Windows 构建与 WinGet 发布契约，相关发行 workflow 在本仓库保持禁用。个人安卓版的下载与发布见[本仓库 Releases](https://github.com/obiyeuy/TauriTavern/releases) 和[个人开发流程](../PersonalDevelopment.md)。
+
 TauriTavern 的 Windows Stable Release 以 GitHub Release 为唯一安装包来源。WinGet
 只发布指向该 Release 的元数据，不重新构建或托管二份安装包。
 
