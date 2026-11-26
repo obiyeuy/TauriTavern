@@ -62,8 +62,8 @@ globalThis.fetch = async (url, options = {}) => {
 `;
 
 const fakeGh = `#!/usr/bin/env node
-const fs = require('node:fs');
-const path = require('node:path');
+import fs from 'node:fs';
+import path from 'node:path';
 const args = process.argv.slice(2);
 if (args[0] !== 'release' || args[1] !== 'upload' || args[3] !== '--repo'
     || args[4] !== 'test-owner/PersonalTavern') process.exit(2);
@@ -142,6 +142,8 @@ async function scenario(t, { channel, previousCode, failUpload = false }) {
     }));
     const importFile = path.join(directory, 'github-boundary.mjs');
     await writeFile(importFile, preload);
+    // The executable owns its module format even when TMPDIR is inside another package.
+    await writeFile(path.join(bin, 'package.json'), JSON.stringify({ type: 'module' }));
     await writeFile(path.join(bin, 'gh'), fakeGh, { mode: 0o755 });
     return {
         code,

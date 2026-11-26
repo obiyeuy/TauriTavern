@@ -10,7 +10,7 @@
   gtk3,
   libayatana-appindicator,
   librsvg,
-  nodejs_22,
+  nodejs_24,
   openssl,
   pkg-config,
   pnpm_11,
@@ -47,7 +47,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   nativeBuildInputs = [
     cargo-tauri.hook
-    nodejs_22
+    nodejs_24
     pkg-config
     pnpm_11
     pnpmConfigHook
