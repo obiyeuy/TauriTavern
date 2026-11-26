@@ -77,24 +77,6 @@ impl FileChatRepository {
         }
     }
 
-    /// Drops cached reads of a chat whose file was just replaced.
-    pub(super) async fn invalidate_chat_caches(
-        &self,
-        target: &ChatCommitTarget,
-        path: &Path,
-    ) -> Result<(), DomainError> {
-        if let ChatCommitTarget::Character {
-            character_id,
-            file_name,
-        } = target
-        {
-            let cache_key = self.get_cache_key(character_id, file_name)?;
-            self.memory_cache.lock().await.remove(&cache_key);
-        }
-        self.remove_summary_cache_for_path(path).await;
-        Ok(())
-    }
-
     async fn commit_payload_stage(
         &self,
         target_path: &Path,
@@ -294,7 +276,7 @@ impl ChatCommitRepository for FileChatRepository {
                         .await?
                     }
                 };
-                self.invalidate_chat_caches(&target, &target_path).await?;
+                self.remove_summary_cache_for_path(&target_path).await;
                 Ok(target)
             })
             .await

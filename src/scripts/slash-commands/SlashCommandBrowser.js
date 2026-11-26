@@ -1,4 +1,5 @@
 import { escapeRegex } from '../utils.js';
+import { isComposingKeyboardEvent } from '../util/keyboard-event.js';
 import { SlashCommandParser } from './SlashCommandParser.js';
 
 export class SlashCommandBrowser {
@@ -135,6 +136,7 @@ export class SlashCommandBrowser {
     }
 
     handleKeyDown(evt) {
+        if (isComposingKeyboardEvent(evt)) return;
         if (!evt.shiftKey && !evt.altKey && evt.ctrlKey && evt.key.toLowerCase() === 'f') {
             if (!this.dom.closest('body')) return;
             if (this.dom.closest('.mes') && !this.dom.closest('.last_mes')) return;

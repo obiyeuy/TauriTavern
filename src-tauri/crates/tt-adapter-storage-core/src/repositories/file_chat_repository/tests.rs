@@ -385,6 +385,164 @@ async fn metadata_commit_rejects_invalid_updates_without_changing_the_file() {
 }
 
 #[tokio::test]
+async fn legacy_directory_queries_observe_logical_character_commits() {
+    let (repository, root) = setup_repository().await;
+    fs::create_dir_all(root.join("characters")).await.unwrap();
+    fs::write(root.join("characters").join("Alice#1.png"), b"")
+        .await
+        .unwrap();
+    let legacy_directory = root.join("chats").join("Alice");
+    fs::create_dir_all(&legacy_directory).await.unwrap();
+    let integrity = "98cac871-a398-4f1b-9bd8-c34d0c874af1";
+    let mut original = payload_with_integrity(integrity);
+    original[0]["chat_metadata"]["variables"] = json!({ "score": "before" });
+    fs::write(
+        legacy_directory.join("session.jsonl"),
+        payload_to_jsonl(&original),
+    )
+    .await
+    .unwrap();
+
+    // Directory enumeration uses the physical legacy name. The character
+    // API resolves its exact stem to that same file through the saved alias.
+    repository.get_all_chats().await.unwrap();
+    let target = character_target("Alice#1", "session");
+    commit_metadata(
+        &repository,
+        target.clone(),
+        json!({ "integrity": integrity, "variables": { "score": "after" } }),
+    )
+    .await
+    .unwrap();
+    let disk_metadata = repository
+        .get_chat_payload("Alice#1", "session")
+        .await
+        .unwrap()[0]["chat_metadata"]
+        .clone();
+    let listed_metadata = repository
+        .get_all_chats()
+        .await
+        .unwrap()
+        .remove(0)
+        .chat_metadata;
+
+    original[0]["chat_metadata"] = disk_metadata.clone();
+    original[1]["mes"] = json!("Updated through the logical character");
+    commit_payload_bytes(
+        &repository,
+        target,
+        payload_to_jsonl(&original).as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
+    let listed_message = repository
+        .get_all_chats()
+        .await
+        .unwrap()
+        .remove(0)
+        .messages
+        .remove(0)
+        .mes;
+    cleanup_repository(repository, root).await;
+
+    assert_eq!(disk_metadata["variables"]["score"], "after");
+    assert_eq!(listed_metadata.variables["score"], "after");
+    assert_eq!(listed_message, "Updated through the logical character");
+}
+
+#[tokio::test]
+async fn native_append_keeps_the_selected_file_and_existing_header() {
+    let (repository, root) = setup_repository().await;
+    let mut original = payload_with_integrity("96e2befb-18a9-498a-bc08-259794451043");
+    original[0]["character_name"] = json!("Display Alice");
+    original[0]["opaque"] = json!({ "preserve": [1, 2, 3] });
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload_to_jsonl(&original).as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
+    let result = repository
+        .add_message(
+            "Alice",
+            "session",
+            tt_domain::models::chat::ChatMessage::character("Display Alice", "Added"),
+        )
+        .await;
+    let stored = repository
+        .get_chat_payload("Alice", "session")
+        .await
+        .unwrap();
+    cleanup_repository(repository, root).await;
+
+    assert!(
+        result.is_ok(),
+        "Append must use the selected file, got {result:?}"
+    );
+    assert_eq!(stored.len(), 3);
+    assert_eq!(stored[0]["character_name"], "Display Alice");
+    assert_eq!(stored[0]["opaque"], original[0]["opaque"]);
+    assert_eq!(stored[1]["mes"], original[1]["mes"]);
+    assert_eq!(stored[2]["mes"], "Added");
+}
+
+#[tokio::test]
+async fn native_appends_preserve_every_message_when_started_together() {
+    let (repository, root) = setup_repository().await;
+    let mut original = payload_with_integrity("048226d9-8f5c-41ce-9617-b3db713f3167");
+    original[0]["character_name"] = json!("Alice");
+    commit_payload_bytes(
+        &repository,
+        character_target("Alice", "session"),
+        payload_to_jsonl(&original).as_bytes(),
+        false,
+    )
+    .await
+    .unwrap();
+    let repository = std::sync::Arc::new(repository);
+    let start = std::sync::Arc::new(tokio::sync::Barrier::new(3));
+    let spawn = |text: &'static str| {
+        let repository = repository.clone();
+        let start = start.clone();
+        tokio::spawn(async move {
+            start.wait().await;
+            repository
+                .add_message(
+                    "Alice",
+                    "session",
+                    tt_domain::models::chat::ChatMessage::character("Alice", text),
+                )
+                .await
+        })
+    };
+    let first = spawn("First");
+    let second = spawn("Second");
+    start.wait().await;
+    let (first, second) = tokio::join!(first, second);
+    let stored = repository
+        .get_chat_payload("Alice", "session")
+        .await
+        .unwrap();
+    let mut messages = stored
+        .iter()
+        .skip(1)
+        .map(|message| message["mes"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    messages.sort();
+    let repository = std::sync::Arc::try_unwrap(repository)
+        .ok()
+        .expect("append tasks released the repository");
+    cleanup_repository(repository, root).await;
+
+    assert!(first.unwrap().is_ok());
+    assert!(second.unwrap().is_ok());
+    assert_eq!(messages, ["First", "Second", "hello"]);
+}
+
+#[tokio::test]
 async fn metadata_writers_invalidate_cached_reads_and_preserve_extension_semantics() {
     let (repository, root) = setup_repository().await;
     let target = character_target("Alice", "metadata");

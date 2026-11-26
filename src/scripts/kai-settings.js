@@ -174,7 +174,7 @@ function loadKoboldSettingsFromPreset(preset, adjustments) {
  * @param {string} type Generation type.
  * @returns {object} Kobold generation data.
  */
-export function getKoboldGenerationData(finalPrompt, settings, maxLength, maxContextLength, isHorde, type) {
+export function getKoboldGenerationData(finalPrompt, settings, maxLength, maxContextLength, isHorde, type, { substitute = substituteParams } = {}) {
     const isImpersonate = type === 'impersonate';
     const isContinue = type === 'continue';
     const sampler_order = kai_settings.sampler_order || settings.sampler_order;
@@ -197,14 +197,14 @@ export function getKoboldGenerationData(finalPrompt, settings, maxLength, maxCon
         typical: kai_settings.typical,
         use_world_info: false,
         singleline: false,
-        stop_sequence: (kai_flags.can_use_stop_sequence || isHorde) ? getStoppingStrings(isImpersonate, isContinue) : undefined,
+        stop_sequence: (kai_flags.can_use_stop_sequence || isHorde) ? getStoppingStrings(isImpersonate, isContinue, isHorde ? 'koboldhorde' : 'kobold', { substitute }) : undefined,
         streaming: kai_settings.streaming_kobold && kai_flags.can_use_streaming && type !== 'quiet',
         can_abort: kai_flags.can_use_streaming,
         mirostat: (kai_flags.can_use_mirostat || isHorde) ? kai_settings.mirostat : undefined,
         mirostat_tau: (kai_flags.can_use_mirostat || isHorde) ? kai_settings.mirostat_tau : undefined,
         mirostat_eta: (kai_flags.can_use_mirostat || isHorde) ? kai_settings.mirostat_eta : undefined,
         use_default_badwordsids: (kai_flags.can_use_default_badwordsids || isHorde) ? kai_settings.use_default_badwordsids : undefined,
-        grammar: (kai_flags.can_use_grammar || isHorde) ? substituteParams(kai_settings.grammar) : undefined,
+        grammar: (kai_flags.can_use_grammar || isHorde) ? substitute(kai_settings.grammar) : undefined,
         grammar_retain_state: (kai_flags.can_use_grammar && !!isContinue) ? true : undefined,
         sampler_seed: kai_settings.seed >= 0 ? kai_settings.seed : undefined,
         api_server: kai_settings.api_server,

@@ -133,6 +133,7 @@ mod tests {
 
     struct CaptureUserErrorLayer {
         messages: Arc<Mutex<Vec<String>>>,
+        command_levels: Arc<Mutex<Vec<tracing::Level>>>,
     }
 
     impl<S> Layer<S> for CaptureUserErrorLayer
@@ -143,14 +144,26 @@ mod tests {
             if let Some(message) = backend_user_error_message(event) {
                 self.messages.lock().unwrap().push(message);
             }
+            if event.metadata().target() == crate::observability_targets::COMMAND {
+                self.command_levels
+                    .lock()
+                    .unwrap()
+                    .push(*event.metadata().level());
+            }
         }
     }
 
     #[test]
     fn extracts_only_user_visible_error_events() {
+        use crate::presentation::commands::helpers::map_command_error;
+        use crate::presentation::errors::CommandError;
+        use tt_domain::models::upstream_failure::{UPSTREAM_NETWORK_TLS_FAILED, UpstreamFailure};
+
         let messages = Arc::new(Mutex::new(Vec::new()));
+        let command_levels = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::registry().with(CaptureUserErrorLayer {
             messages: messages.clone(),
+            command_levels: command_levels.clone(),
         });
         let dispatch = Dispatch::new(subscriber);
 
@@ -158,8 +171,31 @@ mod tests {
             tracing::error!(target: "tauritavern::other", "ordinary error");
             tracing::warn!(target: crate::observability_targets::USER_VISIBLE_ERROR, "warning");
             tracing::error!(target: crate::observability_targets::USER_VISIBLE_ERROR, "visible {}", "error");
+            let returned = map_command_error("Failed to probe API")(CommandError::UpstreamFailure(
+                Box::new(UpstreamFailure::network(
+                    UPSTREAM_NETWORK_TLS_FAILED,
+                    Some("https://api.example.test/v1/chat/completions".to_string()),
+                    "tauritavern.error.network.tls_failed",
+                )),
+            ));
+            let CommandError::UpstreamFailure(failure) = returned else {
+                panic!("The caller must retain its structured failure");
+            };
+            assert_eq!(failure.code, UPSTREAM_NETWORK_TLS_FAILED);
+            assert_eq!(
+                failure.endpoint.as_deref(),
+                Some("https://api.example.test/v1/chat/completions"),
+            );
+            assert!(matches!(
+                map_command_error("Save conflict")(CommandError::Conflict("changed".to_string())),
+                CommandError::Conflict(_),
+            ));
         });
 
         assert_eq!(*messages.lock().unwrap(), vec!["visible error".to_string()]);
+        assert_eq!(
+            *command_levels.lock().unwrap(),
+            vec![tracing::Level::ERROR, tracing::Level::WARN],
+        );
     }
 }

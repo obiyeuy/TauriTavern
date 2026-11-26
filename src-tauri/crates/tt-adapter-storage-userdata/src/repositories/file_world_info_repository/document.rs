@@ -1,12 +1,13 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
-use serde::de::IgnoredAny;
 use serde_json::value::RawValue;
 use tt_domain::errors::DomainError;
+use tt_domain::models::character_book::character_book_to_world_info;
 
 /// A validated document borrowing its original representation.
 pub(super) struct Document<'a> {
-    bytes: &'a [u8],
+    bytes: Cow<'a, [u8]>,
 }
 
 impl<'a> Document<'a> {
@@ -14,15 +15,34 @@ impl<'a> Document<'a> {
         let text = std::str::from_utf8(bytes).map_err(|error| {
             DomainError::InvalidData(format!("Invalid world info UTF-8: {error}"))
         })?;
-        let fields: HashMap<String, IgnoredAny> = serde_json::from_str(text).map_err(json_error)?;
-        if !fields.contains_key("entries") {
-            return Err(invalid_document());
-        }
+        let fields: HashMap<String, &RawValue> = serde_json::from_str(text).map_err(json_error)?;
+        let entries = fields.get("entries").ok_or_else(invalid_document)?;
+        let bytes = match entries.get().as_bytes().first() {
+            Some(b'{') => Cow::Borrowed(bytes),
+            Some(b'[') => {
+                let book = serde_json::from_str(text).map_err(json_error)?;
+                let world_info = character_book_to_world_info(&book)?;
+                Cow::Owned(serde_json::to_vec(&world_info).map_err(json_error)?)
+            }
+            _ => {
+                return Err(DomainError::InvalidData(
+                    "World info entries must be an object or a character book array".into(),
+                ));
+            }
+        };
         Ok(Self { bytes })
     }
 
-    pub(super) fn bytes(&self) -> &'a [u8] {
-        self.bytes
+    pub(super) fn bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
+}
+
+/// Reads normalize legacy book arrays without rewriting the user's original file.
+pub(super) fn normalize(bytes: Vec<u8>) -> Result<Vec<u8>, DomainError> {
+    match Document::parse(&bytes)?.bytes {
+        Cow::Borrowed(_) => Ok(bytes),
+        Cow::Owned(converted) => Ok(converted),
     }
 }
 

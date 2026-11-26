@@ -110,8 +110,12 @@ test('Telegram 抽屉提供账户、当前会话和主题入口', async () => {
     f.shell.dispose();
 });
 
-test('列表搜索收在顶栏，返回先退出搜索并清空原生筛选', async () => {
+test('列表搜索收在顶栏，返回先退出搜索并清空原生筛选', async context => {
     const f = await fixture();
+    context.after(async () => {
+        f.shell.dispose();
+        await f.window.happyDOM.close();
+    });
     const field = f.document.createElement('input');
     field.id = 'character_search_bar';
     f.document.body.append(field);
@@ -128,29 +132,47 @@ test('列表搜索收在顶栏，返回先退出搜索并清空原生筛选', as
     box.value = '角色';
     box.dispatchEvent(new f.window.Event('input', { bubbles: true }));
     assert.equal(field.value, '角色', 'The native field stays the query owner');
+    for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+        box.focus();
+        box.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...flags }));
+        assert.equal(f.document.activeElement === box, true, 'Confirming an IME candidate must retain search focus');
+        box.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...flags }));
+        assert.equal(f.document.body.dataset.ttRolesSearch, 'true', 'IME cancellation must not close role search');
+        assert.equal(field.value, '角色', 'IME cancellation must retain the native query');
+    }
     assert.equal(f.shell.back(), true, 'Back closes search before leaving the list root');
     assert.equal(f.document.body.dataset.ttRolesSearch, 'false');
     assert.equal(field.value, '');
     assert.equal(box.value, '');
     assert.equal(inputs, 2, 'Typing and clearing each re-run the native filter once');
     assert.equal(f.shell.back(), false);
-    f.shell.dispose();
 });
 
-test('聊天菜单和设置返回到打开它们的页面，关闭菜单不改变聊天', async () => {
+test('聊天菜单和设置返回到打开它们的页面，关闭菜单不改变聊天', async context => {
     const f = await fixture();
+    context.after(async () => {
+        f.shell.dispose();
+        await f.window.happyDOM.close();
+    });
     f.changeChat('角色甲');
     f.document.querySelector('#tt-chat-more').click();
     const actions = f.document.querySelector('#tt-chat-actions');
     assert.equal(actions.hidden, false);
     const last = actions.querySelector('button:last-child');
     last.focus();
+    for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+        last.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true, ...flags }));
+        assert.equal(f.document.activeElement === last, true, 'IME candidate navigation must not move the menu selection');
+        last.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, ...flags }));
+        assert.equal(actions.hidden, false, 'IME cancellation must not close the menu');
+    }
+    const legacyEscapesBeforeClose = f.getLegacyEscapes();
     last.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
     assert.equal(f.document.activeElement === actions.querySelector('button'), true);
     actions.querySelector('button').dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
     assert.equal(f.document.activeElement === actions.querySelectorAll('button')[1], true);
     f.document.activeElement.dispatchEvent(new f.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-    assert.equal(f.getLegacyEscapes(), 0, 'Closing the menu consumes Escape before legacy drawer hotkeys');
+    assert.equal(f.getLegacyEscapes(), legacyEscapesBeforeClose, 'Closing the menu consumes Escape before legacy drawer hotkeys');
     assert.equal(actions.hidden, true);
     f.document.querySelector('#tt-chat-more').click();
     assert.equal(f.shell.back(), true);
@@ -164,7 +186,6 @@ test('聊天菜单和设置返回到打开它们的页面，关闭菜单不改�
     assert.equal(f.document.body.dataset.ttChatView, 'chat');
     f.shell.back();
     assert.equal(f.document.body.dataset.ttChatView, 'roles');
-    f.shell.dispose();
 });
 
 test('原生面板失败时保留更多入口并显示可恢复的错误', async () => {
@@ -235,6 +256,10 @@ test('手机设置页只读写原生控件，并用原生事件触发保存', ()
     assert.match(rows[1].textContent, /乙/);
     assert.equal(page.closeSheet(), false, 'Choosing an option closes the sheet');
     const range = rows[2].querySelector('input');
+    Object.assign(document.getElementById('size'), { min: '2', max: '100', step: '0.5' });
+    page.refresh();
+    assert.deepEqual([range.min, range.max, range.step], ['2', '100', '0.5'],
+        'A native model or setting update changes the mobile slider constraints too');
     range.value = '7';
     range.dispatchEvent(new window.Event('input'));
     range.dispatchEvent(new window.Event('change'));
@@ -243,6 +268,200 @@ test('手机设置页只读写原生控件，并用原生事件触发保存', ()
     page.element.querySelector('.tt-sp-link').click();
     assert.equal(nativeOpened, 1, 'All settings still reaches the native panel');
     page.dispose();
+});
+
+test('设置弹窗保留键盘焦点，Escape 只关闭当前编辑器', async context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = '<button id="outside">外部按钮</button><input id="name" value="原文">';
+    let escaped = 0;
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') escaped++; });
+    const page = renderSettingsPage({
+        document, schema: { sections: [{ title: '组', rows: [{ id: 'name', label: '名称' }] }] },
+    });
+    context.after(() => page.dispose());
+    document.body.append(page.element);
+    const row = page.element.querySelector('.tt-sp-row');
+    row.click();
+    const dialog = page.element.querySelector('[role="dialog"]');
+    const field = page.element.querySelector('.tt-sp-field');
+    const submit = page.element.querySelector('.tt-sp-actions button:last-child');
+    submit.focus();
+    submit.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+    assert.ok(document.activeElement === field, 'Tab from the last dialog control returns to its first field');
+    assert.equal(document.getElementById(dialog.getAttribute('aria-labelledby')).textContent, '名称');
+    field.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, true);
+    assert.ok(document.activeElement === row, 'Closing restores the control that opened the editor');
+    assert.equal(escaped, 0, 'The same Escape cannot also close the underlying native panel');
+    assert.equal(document.getElementById('name').value, '原文');
+});
+
+test('设置页重新分组后焦点仍回到原生来源对应的行', context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = '<select id="source"><option value="a">API A</option><option value="b">API B</option></select><input id="a" value="地址A"><input id="b" value="地址B">';
+    const page = renderSettingsPage({
+        document, schema: { sections: () => [{ title: '连接', rows: [
+            { id: 'source', label: '来源' }, { id: document.getElementById('source').value },
+        ] }] },
+    });
+    context.after(() => page.dispose());
+    document.body.append(page.element);
+    page.element.querySelector('.tt-sp-select').click();
+    [...page.element.querySelectorAll('.tt-sp-option')].find(option => option.textContent.includes('API B')).click();
+    page.refresh();
+    const sourceRow = page.element.querySelector('.tt-sp-select');
+    assert.ok(document.activeElement === sourceRow, 'Native form regrouping keeps focus on its replacement source row');
+    assert.match(sourceRow.textContent, /API B/);
+});
+
+test('原生编辑入口和手机概览使用同一个侧栏当前项', async context => {
+    const window = new Window({ width: 1024, height: 768 });
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = '<main id="sheld"></main><input id="lore">';
+    const shell = installMobileChatShell({
+        document, getChat: () => ({ title: '', status: '' }), busy: () => '',
+        closePanels: () => {}, showCharacters: async () => {}, showPanel: async () => {},
+        subscribeChatChanged: () => () => {},
+        settingsPages: { WorldInfo: { sections: [{ title: '世界书', rows: [{ id: 'lore' }] }] } },
+    });
+    context.after(() => shell.dispose());
+    await shell.ready;
+    await shell.openPanel('WorldInfo', '世界书');
+    assert.equal(document.querySelector('[data-tt-shortcut="WorldInfo"]').getAttribute('aria-current'), 'page');
+    await shell.openPanel('native:WorldInfo', '世界书');
+    assert.equal(document.querySelector('[data-tt-shortcut="WorldInfo"]').getAttribute('aria-current'), 'page',
+        'The full native editor remains the same sidebar destination');
+    assert.equal(document.querySelector('[data-tt-route="more"]').hasAttribute('aria-current'), false);
+});
+
+test('数字编辑打开后原生范围改变时，保存按最新范围拒绝越界并保留草稿', async context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = '<input type="range" id="context" min="512" max="8192" step="1" value="4096">';
+    const stored = [];
+    const page = renderSettingsPage({
+        document, schema: { sections: [{ title: '参数', rows: [{ id: 'context' }] }] },
+        save: element => { stored.push(Number(element.value)); },
+    });
+    context.after(() => page.dispose());
+    document.body.append(page.element);
+    page.element.querySelector('.tt-sp-slider button').click();
+    const native = document.getElementById('context');
+    const editor = page.element.querySelector('.tt-sp-field');
+    native.max = '2048';
+    native.value = '1536';
+    page.refresh();
+    page.element.querySelector('.tt-sp-actions button:last-child').click();
+    await window.happyDOM.waitUntilComplete();
+    assert.deepEqual(stored, [], 'The editor cannot silently save the native range’s clamped value');
+    assert.equal(native.value, '1536');
+    assert.equal(editor.value, '4096', 'Invalid input remains visible for correction');
+    assert.equal(editor.validity.rangeOverflow, true);
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, false);
+    editor.value = '1800';
+    page.element.querySelector('.tt-sp-actions button:last-child').click();
+    await window.happyDOM.waitUntilComplete();
+    assert.deepEqual(stored, [1800]);
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, true);
+});
+
+test('选项搜索无结果时明确提示并保留当前选择', context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    const select = document.createElement('select');
+    select.id = 'model';
+    for (let index = 0; index < 12; index++) {
+        const option = document.createElement('option');
+        option.textContent = `model-${index}`;
+        option.value = String(index);
+        select.append(option);
+    }
+    select.value = '4';
+    document.body.append(select);
+    const page = renderSettingsPage({
+        document, schema: { sections: [{ title: '模型', rows: [{ id: 'model' }] }] },
+    });
+    context.after(() => page.dispose());
+    document.body.append(page.element);
+    page.element.querySelector('.tt-sp-row').click();
+    const filter = page.element.querySelector('.tt-sp-filter');
+    filter.value = 'missing-model';
+    filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+    const result = page.element.querySelector('.tt-sp-options-empty');
+    assert.ok(result && !result.hidden && result.textContent, 'An empty option list explains that the search found nothing');
+    assert.equal(select.value, '4');
+    filter.value = 'model-11';
+    filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+    assert.equal(result.hidden, true);
+    assert.equal(page.element.querySelectorAll('.tt-sp-option:not([hidden])').length, 1);
+    page.element.querySelector('.tt-sp-actions button').click();
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, true, 'The picker has a visible close control');
+    assert.equal(select.value, '4');
+});
+
+test('纯换行模板的摘要可见，编辑保存仍保留原始字符', context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    const suffix = document.createElement('textarea');
+    suffix.id = 'suffix';
+    suffix.value = '\n\n';
+    document.body.append(suffix);
+    const page = renderSettingsPage({
+        document, schema: { sections: [{ title: '模板', rows: [{ id: 'suffix', label: '后缀' }] }] },
+    });
+    context.after(() => page.dispose());
+    document.body.append(page.element);
+    const row = page.element.querySelector('.tt-sp-row');
+    assert.match(row.textContent, /\\n\\n/, 'Newline-only content has a readable escaped preview');
+    row.click();
+    const editor = page.element.querySelector('.tt-sp-field');
+    assert.equal(editor.value, '\n\n', 'Escaped previews do not change the text being edited');
+    editor.value = '\n\t\n';
+    page.element.querySelector('.tt-sp-actions button:last-child').click();
+    assert.equal(suffix.value, '\n\t\n');
+    assert.match(row.textContent, /\\n\\t\\n/);
+});
+
+test('慢设置页准备和取消期间不呈现上一页的可编辑内容', async context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = '<main id="sheld"></main><input id="old" value="上一页"><input id="new" value="新页">';
+    const entered = Promise.withResolvers();
+    const pending = Promise.withResolvers();
+    context.after(() => pending.resolve());
+    const shell = installMobileChatShell({
+        document, getChat: () => ({ title: '', status: '' }), busy: () => '',
+        closePanels: () => {}, showCharacters: async () => {}, showPanel: async () => {},
+        subscribeChatChanged: () => () => {},
+        settingsPages: {
+            old: { sections: [{ title: '旧页', rows: [{ id: 'old' }] }] },
+            new: { sections: [{ title: '新页', rows: [{ id: 'new' }] }] },
+        },
+        preparePage: async id => {
+            if (id === 'new') { entered.resolve(); await pending.promise; }
+        },
+    });
+    context.after(() => shell.dispose());
+    await shell.ready;
+    await shell.openPanel('old', '旧页');
+    const loading = shell.openPanel('new', '新页');
+    await entered.promise;
+    const page = document.getElementById('tt-settings-page');
+    assert.equal(page.querySelectorAll('.tt-sp-row').length, 0, 'A new title cannot describe still-editable fields from the previous page');
+    await shell.navigate('more');
+    pending.resolve();
+    await loading;
+    assert.equal(document.body.dataset.ttChatView, 'more');
+    assert.equal(page.querySelectorAll('.tt-sp-row').length, 0, 'Cancelled page preparation cannot publish a late editor');
 });
 
 test('连接页只列出当前来源显示的字段，密钥不回显，按钮点击原生连接', () => {
@@ -279,6 +498,110 @@ test('连接页只列出当前来源显示的字段，密钥不回显，按钮�
     page.refresh();
     assert.ok(page.element.querySelector('.tt-sp-text'), 'Switching API rebuilds the rows');
     assert.doesNotMatch(text(), /接口地址/);
+    page.dispose();
+});
+
+test('设置编辑保留输入约束和说明，等待保存确认，失败后可重试', async context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = `<input id="endpoint" type="url" required inputmode="url" aria-describedby="endpoint_help" value="https://example.com/v1">
+        <p id="endpoint_help">填写服务商的 Base URL，保留 /v1。</p>
+        <input id="key" type="text" data-tt-sensitive data-secret-saved="true" aria-label="API Key">`;
+    const saved = Promise.withResolvers();
+    let attempts = 0;
+    const page = renderSettingsPage({ document, schema: { sections: [{ title: '连接', rows: [
+        { id: 'endpoint', label: '地址' }, { id: 'key', label: 'API Key' },
+    ] }] }, save: () => ++attempts === 1 ? saved.promise : Promise.resolve() });
+    document.body.append(page.element);
+    const key = page.element.querySelectorAll('.tt-sp-row')[1];
+    assert.match(key.textContent, /Saved/, 'A stored key stays visibly saved when its plaintext field is empty');
+    page.element.querySelector('.tt-sp-text').click();
+    const field = page.element.querySelector('.tt-sp-field');
+    assert.equal(field.tagName, 'TEXTAREA', 'Long service addresses wrap instead of hiding their beginning');
+    assert.equal(field.required, true);
+    assert.equal(field.inputMode, 'url');
+    assert.match(document.getElementById(field.getAttribute('aria-describedby')).textContent, /Base URL/);
+    assert.equal(field.selectionStart, 0, 'Long addresses open at their beginning');
+    field.value = 'invalid address';
+    const submit = [...page.element.querySelectorAll('.tt-sp-actions button')].find(button => button.textContent === 'Save');
+    submit.click();
+    assert.equal(attempts, 0, 'Invalid inputs never reach the native save');
+    field.value = 'https://example.com/new/v1';
+    submit.click();
+    assert.equal(submit.disabled, true);
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, false, 'The editor stays open until persistence acknowledges');
+    saved.reject(new Error('Disk unavailable'));
+    await window.happyDOM.waitUntilComplete();
+    assert.match(page.element.querySelector('[role="alert"]').textContent, /Disk unavailable/);
+    assert.equal(field.value, 'https://example.com/new/v1', 'A failed save keeps the draft');
+    assert.equal(submit.disabled, false);
+    submit.click();
+    await window.happyDOM.waitUntilComplete();
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, true);
+    key.click();
+    assert.equal(page.element.querySelector('.tt-sp-field').type, 'password', 'Credential editors mask new input');
+    page.dispose();
+});
+
+test('设置选择等待保存确认，失败后保留选择并允许重试', async context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = `<select id="source">
+        <option value="custom">OpenAI-compatible</option>
+        <option value="custom_openai_responses" selected>OpenAI Responses</option>
+    </select>`;
+    const pending = Promise.withResolvers();
+    context.after(() => pending.resolve());
+    const saved = [];
+    const page = renderSettingsPage({
+        document,
+        schema: { sections: [{ title: 'Connection', rows: [{ id: 'source' }] }] },
+        save: element => {
+            saved.push(element.value);
+            return saved.length === 1 ? pending.promise : Promise.resolve();
+        },
+    });
+    document.body.append(page.element);
+    page.element.querySelector('.tt-sp-row').click();
+    const compatible = page.element.querySelector('.tt-sp-option');
+    compatible.click();
+    assert.deepEqual(saved, ['custom'], 'Selecting a protocol must reach the shared save boundary');
+    assert.equal(document.getElementById('source').value, 'custom');
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, false,
+        'The choice stays open while its save is unconfirmed');
+    assert.equal(compatible.disabled, true);
+    pending.reject(new Error('Storage unavailable'));
+    await window.happyDOM.waitUntilComplete();
+    assert.match(page.element.querySelector('[role="alert"]').textContent, /Storage unavailable/);
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, false);
+    assert.equal(compatible.disabled, false);
+    compatible.click();
+    await window.happyDOM.waitUntilComplete();
+    assert.deepEqual(saved, ['custom', 'custom'], 'Retry saves the selected value without another edit');
+    assert.equal(page.element.querySelector('.tt-sp-sheet').hidden, true);
+    page.dispose();
+});
+
+test('选项保留允许的空值与原生说明，高级字段按组折叠', context => {
+    const window = new Window();
+    context.after(() => window.happyDOM.close());
+    const document = window.document;
+    document.body.innerHTML = '<select id="option"><option value="">自动</option><option value="manual" selected>手动</option></select>';
+    const page = renderSettingsPage({ document, schema: { sections: [{ title: '高级选项', collapsed: true, rows: [
+        { id: 'option', help: '自动使用服务商默认行为。' },
+    ] }] } });
+    document.body.append(page.element);
+    const details = page.element.querySelector('details');
+    assert.ok(details);
+    assert.equal(details.open, false);
+    page.element.querySelector('.tt-sp-row').click();
+    const options = page.element.querySelectorAll('.tt-sp-option');
+    assert.equal(options.length, 2, 'Empty value may be a real automatic choice');
+    options[0].click();
+    assert.equal(document.getElementById('option').value, '');
+    assert.match(page.element.querySelector('.tt-sp-row').textContent, /自动/);
     page.dispose();
 });
 

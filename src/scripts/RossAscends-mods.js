@@ -3,6 +3,7 @@ import { t } from './i18n.js';
 import { DOMPurify, Bowser } from '../lib.js';
 import { ChatInputFocusIntent, focusChatInput } from './chat-input-focus.js';
 import { installChatInputFullscreenEditor } from './chat-input-fullscreen-editor.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 import {
     characters,
@@ -1015,9 +1016,7 @@ export function initRossMods() {
             return;
         }
 
-        // Some WebKit versions dispatch the IME commit keydown after compositionend,
-        // so isComposing is false; keyCode 229 is the legacy IME-processed marker.
-        if (event.isComposing || event.keyCode === 229) {
+        if (isComposingKeyboardEvent(event)) {
             return;
         }
 

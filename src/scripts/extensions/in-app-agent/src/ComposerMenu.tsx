@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { isComposingKeyboardEvent } from '../../../util/keyboard-event.js';
 import { Icon } from './components';
 
 const ITEM = 'button[role^="menuitem"]';
@@ -43,6 +44,7 @@ export function ComposerMenu({ className, state, label, title, name, open, disab
         onOpenChange(false);
     }
     function onKeyDown(event: KeyboardEvent) {
+        if (isComposingKeyboardEvent(event.nativeEvent)) return;
         const items = rows();
         const current = items.findIndex(row => row === document.activeElement);
         const move = (index: number) => {
@@ -71,6 +73,7 @@ export function ComposerMenu({ className, state, label, title, name, open, disab
                 keyboard.current = event.detail === 0; onOpenChange(true);
             }}
             onKeyDown={event => {
+                if (isComposingKeyboardEvent(event.nativeEvent)) return;
                 if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
                 event.preventDefault(); keyboard.current = true; onOpenChange(true);
             }}>{trigger}</button>

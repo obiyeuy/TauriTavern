@@ -8,6 +8,7 @@ import { getTokenCountAsync } from './tokenizers.js';
 import { addLongPressEvent, clamp, copyText, timestampToMoment, uuidv4 } from './utils.js';
 import { chat, deleteSwipe, ensureSwipes, hydrateChatMessageSwipes, isMessageSwipeable, isSwipingAllowed, swipe, syncMesToSwipe } from '/script.js';
 import { keepFocus, setAriaRelation } from './dom-handlers.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 /**
  * Returns whether a swipe picker can be opened for the message.
@@ -435,7 +436,7 @@ export function initSwipePicker() {
         $(document).on('click', '.swipes-counter.swipe-picker-enabled', onSwipeCounterClick);
     }
     $(document).on('keydown', '.swipes-counter.swipe-picker-enabled', async function (e) {
-        if (e.key !== ' ') {
+        if (e.key !== ' ' || isComposingKeyboardEvent(e)) {
             return;
         }
 

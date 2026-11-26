@@ -20,6 +20,7 @@ import { callGenericPopup, POPUP_TYPE, Popup } from './popup.js';
 import { createTagInput, getTagKeyForEntity, getTagsList, printTagList, tag_map, compareTagsForSort, removeTagFromMap, importTags, tag_import_setting } from './tags.js';
 import { t } from './i18n.js';
 import { initPopupMenu } from './popup-menu.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 /**
  * Static object representing the actions of the
@@ -672,6 +673,7 @@ class BulkEditOverlay {
     };
 
     handleContextMenuKeydown = (event) => {
+        if (isComposingKeyboardEvent(event)) return;
         if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
             this.handleContextMenuShow(event);
         }

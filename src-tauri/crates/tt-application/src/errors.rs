@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use tt_domain::errors::DomainError;
-use tt_domain::models::upstream_failure::UpstreamFailure;
+use tt_domain::models::upstream_failure::{UPSTREAM_FAILURE_CATEGORY_NETWORK, UpstreamFailure};
 
 #[derive(Error, Debug)]
 pub enum ApplicationError {
@@ -12,7 +12,7 @@ pub enum ApplicationError {
     Transient(String),
 
     #[error("{0}")]
-    UpstreamFailure(UpstreamFailure),
+    UpstreamFailure(Box<UpstreamFailure>),
 
     #[error("{0}")]
     Cancelled(String),
@@ -38,10 +38,11 @@ pub enum ApplicationError {
 
 impl ApplicationError {
     pub(crate) fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::RateLimited(_) | Self::Transient(_) | Self::UpstreamFailure(_)
-        )
+        match self {
+            Self::RateLimited(_) | Self::Transient(_) => true,
+            Self::UpstreamFailure(failure) => failure.category == UPSTREAM_FAILURE_CATEGORY_NETWORK,
+            _ => false,
+        }
     }
 }
 

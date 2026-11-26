@@ -1,5 +1,6 @@
 import { t } from './i18n.js';
 import { escapeHtml, throttle, uuidv4 } from './utils.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 const COUNTERS = '.range-block-counter input[type="number"][data-for], input.neo-range-input[type="number"][data-for]';
 const validationMessages = new WeakMap();
@@ -188,8 +189,8 @@ export function initDomHandlers() {
     });
     $(document).on('change', COUNTERS, function () { commitCounter(this); });
     $(document).on('keydown', COUNTERS, function (event) {
-        if (event.key !== 'Enter' || event.isDefaultPrevented() || event.originalEvent?.isComposing
-            || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (event.key !== 'Enter' || event.isDefaultPrevented() || isComposingKeyboardEvent(event)
+            || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         event.preventDefault();
         commitCounter(this);
     });

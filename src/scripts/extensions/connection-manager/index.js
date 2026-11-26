@@ -13,13 +13,14 @@ import { SlashCommandClosure } from '../../slash-commands/SlashCommandClosure.js
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, isTrueBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
-import { t } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 import { getSecretLabelById, resolveSecretKey, SECRET_KEYS } from '../../secrets.js';
 import { connectCurrentApi } from '../../slash-commands.js';
 import { performFuzzySearch } from '/scripts/power-user.js';
 import { StreamingDisplay } from '/scripts/streaming-display.js';
 import { ConnectionManagerRequestService } from '../shared.js';
 import { formatReasoning } from '/scripts/reasoning.js';
+import { toUserFacingErrorText } from '../../util/user-facing-error.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
@@ -48,6 +49,13 @@ let profileApplicationQueue = Promise.resolve();
 const ALLOW_EMPTY = [
     'stop-strings',
     'start-reply-with',
+];
+
+// Recorded inputs and command results have different empty-value conventions.
+// /prompt-post-processing records "none", but successfully setting it returns "".
+const ALLOW_EMPTY_RESULT = [
+    ...ALLOW_EMPTY,
+    'prompt-post-processing',
 ];
 
 const CC_COMMANDS = [
@@ -105,48 +113,6 @@ const FANCY_NAMES = {
     'secret-id': 'Secret',
     'regex-preset': 'Regex Preset',
 };
-
-/**
- * A wrapper for the connection manager spinner.
- */
-class ConnectionManagerSpinner {
-    /**
-     * @type {AbortController[]}
-     */
-    static abortControllers = [];
-
-    /** @type {HTMLElement} */
-    spinnerElement;
-
-    /** @type {AbortController} */
-    abortController = new AbortController();
-
-    constructor() {
-        // @ts-ignore
-        this.spinnerElement = document.getElementById('connection_profile_spinner');
-        this.abortController = new AbortController();
-    }
-
-    start() {
-        ConnectionManagerSpinner.abortControllers.push(this.abortController);
-        this.spinnerElement.classList.remove('hidden');
-    }
-
-    stop() {
-        this.spinnerElement.classList.add('hidden');
-    }
-
-    isAborted() {
-        return this.abortController.signal.aborted;
-    }
-
-    static abort() {
-        for (const controller of ConnectionManagerSpinner.abortControllers) {
-            controller.abort();
-        }
-        ConnectionManagerSpinner.abortControllers = [];
-    }
-}
 
 /**
  * Get named arguments for the command callback.
@@ -282,6 +248,7 @@ function getSelectedItemRef() {
 /**
  * Sets the selected managed item while preserving selectedProfile's legacy meaning.
  * @param {ConnectionManagerItemRef|null} ref Selected item
+ * @returns {number} Version owned by this selection, including capture and deletion
  */
 function setSelectedItemRef(ref) {
     extension_settings.connectionManager.selectedItem = ref ? { kind: ref.kind, id: ref.id } : null;
@@ -290,6 +257,7 @@ function setSelectedItemRef(ref) {
     } else if (ref.kind === CONNECTION_ITEM_KIND.PROFILE) {
         extension_settings.connectionManager.selectedProfile = ref.id;
     }
+    return ++profileApplicationVersion;
 }
 
 /**
@@ -432,7 +400,7 @@ async function executeManagedCommand(command, value = '', args = {}) {
 }
 
 /**
- * Executes a slash command and requires it to produce a value.
+ * Checks the original command result convention without changing its public return value.
  * @param {string} command Command name
  * @param {string} [value] Unnamed argument
  * @param {object} [args] Named arguments
@@ -440,8 +408,9 @@ async function executeManagedCommand(command, value = '', args = {}) {
  */
 async function requireManagedCommand(command, value = '', args = {}) {
     const result = await executeManagedCommand(command, value, args);
-    if (!result) {
-        throw new Error(`Slash command /${command} did not return a value`);
+    if (!result && !ALLOW_EMPTY_RESULT.includes(command)) {
+        const setting = translate(FANCY_NAMES[command] || command);
+        throw new Error(`${setting} (/${command}): ${t`The setting could not be applied.`}`);
     }
     return result;
 }
@@ -854,141 +823,73 @@ function assertModelTargetCanApply(target) {
 /**
  * Applies a model target without changing preset or prompt-formatting settings.
  * @param {LlmModelTarget} target Model target
+ * @param {(command:string, value?:string, args?:object) => Promise<string>} applyCommand Managed application command
  * @returns {Promise<void>}
  */
-async function applyModelTarget(target) {
-    if (!target) {
-        return;
-    }
+async function applyModelTarget(target, applyCommand) {
     assertModelTargetCanApply(target);
 
-    const applicationVersion = ++profileApplicationVersion;
-    ConnectionManagerSpinner.abort();
-    const previousApplication = profileApplicationQueue;
-    const application = (async () => {
-        await previousApplication;
+    await applyCommand('api', target.api);
 
-        if (applicationVersion !== profileApplicationVersion) {
-            throw new Error('Model target application aborted');
-        }
+    if (target.api === 'vertexai') {
+        const mode = target.secretRef?.key === SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT ? 'full' : 'express';
+        $('#vertexai_auth_mode').val(mode).trigger('change');
+    }
 
-        const spinner = new ConnectionManagerSpinner();
-        spinner.start();
+    if (target['custom-api-format']) {
+        await applyCommand('custom-api-format', target['custom-api-format']);
+    } else if (target.api === 'custom') {
+        // /api custom intentionally preserves the current custom format for full profiles; model targets must not inherit it.
+        await applyCommand('custom-api-format', 'openai_compat');
+    }
+    applyModelTargetAdapterHints(target);
 
-        try {
-            await withConnectionValidationSuspended('Model target application', async () => {
-                await requireManagedCommand('api', target.api);
+    if (target['api-url']) {
+        await applyCommand('api-url', target['api-url'], { connect: 'false', quiet: 'true' });
+    } else {
+        // A missing route clears the previous server/proxy URL; this operation has a valid empty result.
+        await executeManagedCommand('api-url', '', { connect: 'false', quiet: 'true', clear: 'true' });
+    }
 
-                if (target.api === 'vertexai') {
-                    const mode = target.secretRef?.key === SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT ? 'full' : 'express';
-                    $('#vertexai_auth_mode').val(mode).trigger('change');
-                }
+    if (target.secretRef?.id) {
+        await applyCommand('secret-id', target.secretRef.id, { key: target.secretRef.key, quiet: 'true' });
+    }
 
-                if (target['custom-api-format']) {
-                    await requireManagedCommand('custom-api-format', target['custom-api-format']);
-                } else if (target.api === 'custom') {
-                    // /api custom intentionally preserves the current custom format for full profiles; model targets must not inherit it.
-                    await requireManagedCommand('custom-api-format', 'openai_compat');
-                }
-                applyModelTargetAdapterHints(target);
-
-                if (target['api-url']) {
-                    await requireManagedCommand('api-url', target['api-url'], { connect: 'false', quiet: 'true' });
-                } else {
-                    // A missing route field is part of the target snapshot, not an instruction to keep a previous proxy/server URL.
-                    await executeManagedCommand('api-url', '', { connect: 'false', quiet: 'true', clear: 'true' });
-                }
-
-                if (target.secretRef?.id) {
-                    await requireManagedCommand('secret-id', target.secretRef.id, { key: target.secretRef.key, quiet: 'true' });
-                }
-
-                if (target.proxy) {
-                    await requireManagedCommand('proxy', target.proxy);
-                } else {
-                    await requireManagedCommand('proxy', NO_PROXY_PRESET);
-                }
-
-                await requireManagedCommand('model', target.model, { quiet: 'true' });
-            });
-        } finally {
-            spinner.stop();
-        }
-
-        if (applicationVersion === profileApplicationVersion) {
-            connectCurrentApi();
-        }
-    })();
-
-    profileApplicationQueue = application.catch(() => {});
-    return application;
+    await applyCommand('proxy', target.proxy || NO_PROXY_PRESET);
+    await applyCommand('model', target.model, { quiet: 'true' });
 }
 
 /**
  * Applies the connection profile.
  * @param {ConnectionProfile} profile Connection profile
+ * @param {(command:string, value?:string, args?:object) => Promise<string>} applyCommand Managed application command
  * @returns {Promise<void>}
  */
-async function applyConnectionProfile(profile) {
-    if (!profile) {
-        return;
+async function applyConnectionProfile(profile, applyCommand) {
+    const commands = profile.mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
+    for (const command of commands) {
+        const argument = profile[command];
+        const allowEmpty = ALLOW_EMPTY.includes(command);
+        if (!argument && !(allowEmpty && argument === '')) {
+            continue;
+        }
+
+        const commandArgs = allowEmpty ? { force: 'true' } : {};
+        if (command === 'api-url') {
+            // The final connect validates the fully applied profile once.
+            commandArgs.connect = 'false';
+        }
+        await applyCommand(command, argument, commandArgs);
     }
+}
 
-    // Abort in-flight replay work and let the queued latest application own the final validation.
-    const applicationVersion = ++profileApplicationVersion;
-    ConnectionManagerSpinner.abort();
-    const previousApplication = profileApplicationQueue;
-    const application = (async () => {
-        await previousApplication;
-
-        if (applicationVersion !== profileApplicationVersion) {
-            throw new Error('Profile application aborted');
-        }
-
-        const mode = profile.mode;
-        const commands = mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
-        const spinner = new ConnectionManagerSpinner();
-        spinner.start();
-
-        try {
-            await withConnectionValidationSuspended('Connection profile application', async () => {
-                for (const command of commands) {
-                    if (spinner.isAborted() || applicationVersion !== profileApplicationVersion) {
-                        throw new Error('Profile application aborted');
-                    }
-
-                    const argument = profile[command];
-                    const allowEmpty = ALLOW_EMPTY.includes(command);
-                    if (!argument && !(allowEmpty && argument === '')) {
-                        continue;
-                    }
-
-                    try {
-                        const commandArgs = allowEmpty ? { force: 'true' } : {};
-                        if (command === 'api-url') {
-                            // The final connect below validates the fully applied profile once.
-                            commandArgs.connect = 'false';
-                        }
-                        const args = getNamedArguments(commandArgs);
-                        await SlashCommandParser.commands[command].callback(args, argument);
-                    } catch (error) {
-                        console.error(`Failed to execute command: ${command} ${argument}`, error);
-                    }
-                }
-            });
-        } finally {
-            spinner.stop();
-        }
-
-        if (applicationVersion === profileApplicationVersion) {
-            // Validate only after all profile fields, including custom format and secret id, have settled.
-            connectCurrentApi();
-        }
-    })();
-
-    // Keep later applications queued even when an older replay is aborted or fails.
-    profileApplicationQueue = application.catch(() => {});
-    return application;
+/**
+ * @param {number} applicationVersion Version captured when application was requested
+ */
+function assertProfileApplicationCurrent(applicationVersion) {
+    if (applicationVersion !== profileApplicationVersion) {
+        throw new DOMException('Connection settings application was cancelled.', 'AbortError');
+    }
 }
 
 /**
@@ -1063,7 +964,6 @@ function renderConnectionProfiles(profiles) {
 
     noneOption.value = '';
     noneOption.textContent = NONE;
-    noneOption.selected = !selectedValue;
     profiles.appendChild(noneOption);
 
     const profileGroup = document.createElement('optgroup');
@@ -1073,7 +973,6 @@ function renderConnectionProfiles(profiles) {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = profile.name;
-        option.selected = value === selectedValue;
         profileGroup.appendChild(option);
     }
     if (profileGroup.children.length > 0) {
@@ -1087,12 +986,12 @@ function renderConnectionProfiles(profiles) {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = target.name;
-        option.selected = value === selectedValue;
         modelTargetGroup.appendChild(option);
     }
     if (modelTargetGroup.children.length > 0) {
         profiles.appendChild(modelTargetGroup);
     }
+    profiles.value = selectedValue;
 }
 
 /**
@@ -1104,20 +1003,25 @@ async function renderDetailsContent(detailsContent) {
     if (detailsContent.classList.contains('hidden')) {
         return;
     }
+    const applicationVersion = profileApplicationVersion;
     const selected = getSelectedItem();
+    let templateParams;
     if (selected?.kind === CONNECTION_ITEM_KIND.PROFILE) {
         const profileForDisplay = makeFancyProfile(selected.item);
-        const templateParams = { profile: profileForDisplay };
+        templateParams = { profile: profileForDisplay };
         if (Array.isArray(selected.item.exclude) && selected.item.exclude.length > 0) {
             templateParams.omitted = selected.item.exclude.map(e => FANCY_NAMES[e]).join(', ');
         }
-        const template = await renderExtensionTemplateAsync(MODULE_NAME, 'view', templateParams);
-        detailsContent.innerHTML = template;
     } else if (selected?.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-        const template = await renderExtensionTemplateAsync(MODULE_NAME, 'view', { profile: makeFancyModelTarget(selected.item) });
-        detailsContent.innerHTML = template;
+        templateParams = { profile: makeFancyModelTarget(selected.item) };
     } else {
         detailsContent.textContent = t`No profile selected`;
+        return;
+    }
+
+    const template = await renderExtensionTemplateAsync(MODULE_NAME, 'view', templateParams);
+    if (applicationVersion === profileApplicationVersion) {
+        detailsContent.innerHTML = template;
     }
 }
 
@@ -1342,59 +1246,105 @@ export async function init() {
     }
     toggleProfileSpecificButtons();
 
-    profiles.addEventListener('change', async function () {
-        const selectedOption = profiles.selectedOptions[0];
-        if (!selectedOption) {
-            // Safety net for preventing the command getting stuck
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
-            return;
+    /**
+     * Owns selection, preparation and replay for native controls and commands.
+     * @returns {Promise<string>}
+     */
+    async function applySelectedConnectionItem() {
+        const previousApplication = profileApplicationQueue;
+        if (profiles.selectedIndex < 0) {
+            throw new Error(t`No connection settings selected.`);
         }
 
-        const selectedRef = parseItemOptionValue(selectedOption.value);
-        setSelectedItemRef(selectedRef);
+        const selectedRef = parseItemOptionValue(profiles.value);
+        const selected = resolveItemRef(selectedRef);
+        if (selectedRef && !selected) {
+            throw new Error(`Connection Manager item not found: ${selectedRef.kind}:${selectedRef.id}`);
+        }
+        const applicationVersion = setSelectedItemRef(selectedRef);
         saveSettingsDebounced();
-        await renderDetailsContent(detailsContent);
-
         toggleProfileSpecificButtons();
 
-        // None option selected
-        if (!selectedRef) {
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, NONE);
-            return;
-        }
-
-        const selected = resolveItemRef(selectedRef);
+        const spinner = document.getElementById('connection_profile_spinner');
         if (!selected) {
-            console.log(`Connection Manager item not found: ${selectedRef.kind}:${selectedRef.id}`);
-            return;
-        }
+            // None has no replay; keep the queue for the next real application.
+            spinner.classList.add('hidden');
+            await renderDetailsContent(detailsContent);
+        } else {
+            const application = (async () => {
+                try {
+                    await previousApplication;
+                    assertProfileApplicationCurrent(applicationVersion);
+                    await renderDetailsContent(detailsContent);
+                    assertProfileApplicationCurrent(applicationVersion);
 
-        if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
-            await applyConnectionProfile(selected.item);
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, selected.item.name);
-        } else if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            await applyModelTarget(selected.item);
-            await eventSource.emit(event_types.MODEL_TARGET_LOADED, selected.item.name);
+                    const applyCommand = async (command, value = '', args = {}) => {
+                        assertProfileApplicationCurrent(applicationVersion);
+                        const result = await requireManagedCommand(command, value, args);
+                        assertProfileApplicationCurrent(applicationVersion);
+                        return result;
+                    };
+                    const label = selected.kind === CONNECTION_ITEM_KIND.PROFILE
+                        ? 'Connection profile application' : 'Model target application';
+                    spinner.classList.remove('hidden');
+                    try {
+                        await withConnectionValidationSuspended(label, async () => {
+                            if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
+                                await applyConnectionProfile(selected.item, applyCommand);
+                            } else if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
+                                await applyModelTarget(selected.item, applyCommand);
+                            } else {
+                                throw new Error(`Unknown connection manager item kind: ${selected.kind}`);
+                            }
+                        });
+                    } finally {
+                        spinner.classList.add('hidden');
+                    }
+                    assertProfileApplicationCurrent(applicationVersion);
+                    connectCurrentApi();
+                } catch (error) {
+                    assertProfileApplicationCurrent(applicationVersion);
+                    throw error;
+                }
+            })();
+
+            // Release replay before notifying listeners, which can apply another item.
+            profileApplicationQueue = application.catch(() => {});
+            await application;
         }
+        assertProfileApplicationCurrent(applicationVersion);
+        const name = selected ? selected.item.name : NONE;
+        const loadedEvent = selected?.kind === CONNECTION_ITEM_KIND.MODEL_TARGET
+            ? event_types.MODEL_TARGET_LOADED : event_types.CONNECTION_PROFILE_LOADED;
+        await eventSource.emit(loadedEvent, name);
+        return name;
+    }
+
+    function presentApplicationError(error) {
+        if (error?.name === 'AbortError') return;
+        console.error('Failed to apply connection settings', error);
+        toastr.error(toUserFacingErrorText(error), t`Connection settings could not be fully applied.`);
+    }
+
+    profiles.addEventListener('change', () => {
+        void applySelectedConnectionItem().catch(presentApplicationError);
     });
 
     const reloadButton = document.getElementById('reload_connection_profile');
     reloadButton.addEventListener('click', async () => {
-        const selected = getSelectedItem();
-        if (!selected) {
-            console.log('No profile selected');
-            return;
+        try {
+            const selected = getSelectedItem();
+            if (!selected) {
+                console.log('No profile selected');
+                return;
+            }
+            await applySelectedConnectionItem();
+            const message = selected.kind === CONNECTION_ITEM_KIND.PROFILE
+                ? t`Connection profile reloaded` : t`Model reloaded`;
+            toastr.success(message, '', { timeOut: 1500 });
+        } catch (error) {
+            presentApplicationError(error);
         }
-        if (selected.kind === CONNECTION_ITEM_KIND.PROFILE) {
-            await applyConnectionProfile(selected.item);
-            await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, selected.item.name);
-            toastr.success(t`Connection profile reloaded`, '', { timeOut: 1500 });
-        } else if (selected.kind === CONNECTION_ITEM_KIND.MODEL_TARGET) {
-            await applyModelTarget(selected.item);
-            await eventSource.emit(event_types.MODEL_TARGET_LOADED, selected.item.name);
-            toastr.success(t`Model reloaded`, '', { timeOut: 1500 });
-        }
-        await renderDetailsContent(detailsContent);
     });
 
     const createButton = document.getElementById('create_connection_profile');
@@ -1598,36 +1548,32 @@ export async function init() {
                 return profile.name;
             }
 
-            if (value === NONE) {
-                profiles.selectedIndex = 0;
-                profiles.dispatchEvent(new Event('change'));
-                return NONE;
-            }
+            const profile = value === NONE ? null : findProfileByName(value);
 
-            const profile = findProfileByName(value);
-
-            if (!profile) {
+            if (value !== NONE && !profile) {
                 return '';
             }
 
             const shouldAwait = !isFalseBoolean(String(args?.await));
-            const awaitPromise = new Promise((resolve) => eventSource.once(event_types.CONNECTION_PROFILE_LOADED, resolve));
-
-            profiles.selectedIndex = Array.from(profiles.options).findIndex(o => o.value === makeItemOptionValue(CONNECTION_ITEM_KIND.PROFILE, profile.id));
-            profiles.dispatchEvent(new Event('change'));
+            profiles.selectedIndex = profile
+                ? Array.from(profiles.options).findIndex(o => o.value === makeItemOptionValue(CONNECTION_ITEM_KIND.PROFILE, profile.id))
+                : 0;
+            const application = applySelectedConnectionItem();
 
             if (shouldAwait) {
-                await awaitPromise;
+                await application;
 
                 // We should also await the connection to be established
                 const parsedTimeout = parseInt(args?.timeout?.toString());
                 const timeout = !isNaN(parsedTimeout) ? Math.max(0, parsedTimeout) : 2000;
-                if (timeout > 0) {
+                if (profile && timeout > 0) {
                     await waitUntilCondition(() => online_status !== 'no_connection', timeout, 100, { rejectOnTimeout: false });
                 }
+            } else {
+                void application.catch(presentApplicationError);
             }
 
-            return profile.name;
+            return profile ? profile.name : NONE;
         },
     }));
 

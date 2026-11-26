@@ -5,7 +5,6 @@ use tt_domain::models::character::Character;
 use tt_domain::models::filename::MAX_SANITIZED_FILENAME_BYTES;
 use tt_domain::models::world_info::{WORLD_INFO_EXTENSION, sanitize_world_info_name};
 
-use super::lorebook_codec::character_book_to_world_info;
 use super::{CharacterCardValidationMode, CharacterService, card_contract};
 use crate::dto::character_dto::{
     CharacterLorebookAdoptionChoice, CharacterLorebookAdoptionDto,
@@ -13,6 +12,7 @@ use crate::dto::character_dto::{
 };
 use crate::errors::ApplicationError;
 use crate::services::hashing::hex_lower;
+use tt_domain::models::character_book::character_book_to_world_info;
 
 enum LorebookAdoptionPlan {
     None,

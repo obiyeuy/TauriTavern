@@ -1,6 +1,7 @@
 import { invoke, listen } from '../../../../tauri-bridge.js';
 import { translate } from '../../../i18n.js';
 import { LAN_SYNC_DEVICES_CHANGED_EVENT } from './constants.js';
+import { runTaskOrPopup } from './popup-utils.js';
 
 export async function installPairingListener(appReady) {
     await Promise.all([
@@ -47,7 +48,7 @@ export async function installPairingListener(appReady) {
             });
 
             const accept = result === POPUP_RESULT.AFFIRMATIVE;
-            await invoke('lan_sync_confirm_pairing', { requestId, accept });
+            await runTaskOrPopup(() => invoke('lan_sync_confirm_pairing', { requestId, accept }));
         }),
     ]);
 }

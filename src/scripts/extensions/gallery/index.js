@@ -20,6 +20,8 @@ import { t, translate } from '../../i18n.js';
 import { Popup } from '../../popup.js';
 import { deleteMediaFromServer } from '../../chats.js';
 import { MEDIA_REQUEST_TYPE, VIDEO_EXTENSIONS } from '../../constants.js';
+import { requireOkResponse } from '../../util/command-error-utils.js';
+import { toUserFacingErrorText } from '../../util/user-facing-error.js';
 
 const isVideo = (/** @type {string} */ url) => VIDEO_EXTENSIONS.some(ext => new RegExp(`.${ext}$`, 'i').test(url));
 const extensionName = 'gallery';
@@ -122,6 +124,7 @@ async function getGalleryItems(url) {
             type: MEDIA_REQUEST_TYPE.IMAGE | MEDIA_REQUEST_TYPE.VIDEO,
         }),
     });
+    await requireOkResponse(response, 'Load gallery images');
 
     url = await getSanitizedFilename(url);
 
@@ -156,21 +159,12 @@ async function getGalleryItems(url) {
  * @returns {Promise<string[]>} - Resolves with an array of gallery folders.
  */
 async function getGalleryFolders() {
-    try {
-        const response = await fetch('/api/images/folders', {
-            method: 'POST',
-            headers: getRequestHeaders({ omitContentType: true }),
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error. Status: ${response.status}`);
-        }
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('Failed to fetch gallery folders:', error);
-        return [];
-    }
+    const response = await fetch('/api/images/folders', {
+        method: 'POST',
+        headers: getRequestHeaders({ omitContentType: true }),
+    });
+    await requireOkResponse(response, 'Load gallery folders');
+    return await response.json();
 }
 
 /**
@@ -259,7 +253,14 @@ async function initGallery(items, url) {
         }
 
         // Refresh the gallery
-        const newItems = await getGalleryItems(url);
+        let newItems;
+        try {
+            newItems = await getGalleryItems(url);
+        } catch (error) {
+            console.error('Failed to refresh gallery:', error);
+            toastr.error(toUserFacingErrorText(error), t`Could not refresh gallery`);
+            return;
+        }
         $('#dragGallery').closest('#gallery').remove();
         await makeMovable(url);
         await delay(100);
@@ -335,6 +336,7 @@ async function showCharGallery(deleteModeState = false) {
         await initGallery(items, url);
     } catch (err) {
         console.error(err);
+        toastr.error(toUserFacingErrorText(err), t`Could not load gallery images`);
     }
 }
 
@@ -523,21 +525,26 @@ async function makeMovable(url) {
     newElement.append(topBarElement);
 
     // Populate the gallery folder input with a list of available folders
-    const folders = await getGalleryFolders();
-    $(galleryFolderInput)
-        .autocomplete({
-            source: (i, o) => {
-                const term = i.term.toLowerCase();
-                const filtered = folders.filter(f => f.toLowerCase().includes(term));
-                o(filtered);
-            },
-            select: (e, u) => {
-                galleryFolderInput.value = u.item.value;
-                onChangeFolder(e);
-            },
-            minLength: 0,
-        })
-        .on('focus', () => $(galleryFolderInput).autocomplete('search', ''));
+    try {
+        const folders = await getGalleryFolders();
+        $(galleryFolderInput)
+            .autocomplete({
+                source: (i, o) => {
+                    const term = i.term.toLowerCase();
+                    const filtered = folders.filter(f => f.toLowerCase().includes(term));
+                    o(filtered);
+                },
+                select: (e, u) => {
+                    galleryFolderInput.value = u.item.value;
+                    onChangeFolder(e);
+                },
+                minLength: 0,
+            })
+            .on('focus', () => $(galleryFolderInput).autocomplete('search', ''));
+    } catch (error) {
+        console.warn('Gallery folder suggestions are unavailable:', error);
+        toastr.warning(toUserFacingErrorText(error), t`Gallery folder suggestions are temporarily unavailable`);
+    }
 
     //add a div for the gallery
     newElement.append('<div id="dragGallery"></div>');
@@ -783,18 +790,12 @@ SlashCommandParser.addCommandObject(SlashCommand.fromProps({
 }));
 
 async function listGalleryCommand(args) {
-    try {
-        let url = args.char ?? (args.group ? groups.find(it => it.name == args.group)?.id : null) ?? (selected_group || this_chid);
-        if (!args.char && !args.group && !selected_group && this_chid !== undefined) {
-            url = getGalleryFolder(characters[this_chid]);
-        }
-
-        const items = await getGalleryItems(url);
-        return JSON.stringify(items.map(it => it.src));
-    } catch (err) {
-        console.error(err);
+    let url = args.char ?? (args.group ? groups.find(it => it.name == args.group)?.id : null) ?? (selected_group || this_chid);
+    if (!args.char && !args.group && !selected_group && this_chid !== undefined) {
+        url = getGalleryFolder(characters[this_chid]);
     }
-    return JSON.stringify([]);
+    const items = await getGalleryItems(url);
+    return JSON.stringify(items.map(it => it.src));
 }
 
 function addGalleryWandButton() {

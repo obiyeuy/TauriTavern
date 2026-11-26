@@ -1,4 +1,5 @@
 import { keepFocus, setAriaRelation } from './dom-handlers.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 import { DOMPurify } from '../lib.js';
 
 import {
@@ -2040,6 +2041,7 @@ function appendViewTagToList(list, tag, count) {
     // Not gonna invest too much time into this small control here
     let lastHit = 0;
     template.on('keydown', (evt) => {
+        if (isComposingKeyboardEvent(evt)) return;
         if (evt.key === 'Escape') {
             if (evt.target === primaryColorPicker[0] || evt.target === secondaryColorPicker[0]) {
                 if (Date.now() - lastHit < 5000) // If user hits it twice in five seconds

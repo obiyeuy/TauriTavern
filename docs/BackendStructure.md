@@ -169,6 +169,8 @@ SillyTavern frontend / extension / script
 
 `tauritavern` 是最外层 host crate。它可以知道所有 concrete implementation，但只应在明确边界处使用它们。
 
+本 crate 的 `build.rs` 经原 Tauri build attributes 生成唯一 Context、嵌入资源和 ACL；host 使用 `tauri_build_context!()` 读取生成产物。资源在 Rust 库编译前写入，Cargo 能复用已完成的编译。插件初始化与各平台的原构建、打包和库校验步骤继续保留，Context 不再由 host 的 `generate_context!()` 在 rustc 内重新生成。
+
 主要目录：
 
 ```text

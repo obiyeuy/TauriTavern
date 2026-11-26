@@ -1,4 +1,5 @@
 import { writeClipboardText } from '../../../tauri-bridge.js';
+import { isComposingKeyboardEvent } from '../../../scripts/util/keyboard-event.js';
 
 const GLOBAL_KEY = '__TAURITAVERN_PERF__';
 const EMBEDDED_RUNTIME_KEY = '__TAURITAVERN_EMBEDDED_RUNTIME__';
@@ -1157,7 +1158,7 @@ function createPerfController(options = {}) {
         state.keyHandlerInstalled = true;
 
         window.addEventListener('keydown', (ev) => {
-            if (!ev || typeof ev.key !== 'string') {
+            if (!ev || typeof ev.key !== 'string' || isComposingKeyboardEvent(ev)) {
                 return;
             }
             // Ctrl+Alt+P toggles the HUD (dev convenience).

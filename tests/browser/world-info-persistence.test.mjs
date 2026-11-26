@@ -2,6 +2,65 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createBrowserRuntime, createPaginationWaiter } from './runtime.mjs';
 
+test('world info import replaces the existing name atomically and preserves its bindings', async context => {
+    const { window, getModule, load, startHost } = await createBrowserRuntime();
+    context.after(() => window.happyDOM.close());
+    await startHost();
+    const main = (await load('script.js')).namespace;
+    const worldInfo = getModule('scripts/world-info.js').namespace;
+    const power = getModule('scripts/power-user.js').namespace.power_user;
+    getModule('scripts/popup.js').namespace.Popup.show.confirm = async () => true;
+    main.setAnimationDuration(0);
+
+    const name = 'Existing É';
+    const original = '{"entries":{"42":{"uid":42,"key":["init"],"content":"Original","disable":false,"order":100}}}';
+    const worlds = new Map([[name, original]]);
+    const fetch = window.fetch;
+    let rejectImport = true;
+    window.fetch = async (url, init) => {
+        if (url === '/api/settings/get') return window.Response.json({ world_names: [...worlds.keys()] });
+        if (url === '/api/worldinfo/sanitize-name') return window.Response.json({ name: 'existing e' });
+        if (url === '/api/worldinfo/delete') {
+            worlds.delete(JSON.parse(init.body).name);
+            return window.Response.json({ ok: true });
+        }
+        if (url === '/api/worldinfo/import') {
+            if (rejectImport) {
+                return new window.Response('Character book contains duplicate entry id 42', { status: 400 });
+            }
+            const target = init.body.get('avatar').name.replace(/\.json$/, '');
+            worlds.set(target, init.body.get('convertedData'));
+            return window.Response.json({ name: target });
+        }
+        if (url === '/api/worldinfo/get') {
+            return new window.Response(worlds.get(JSON.parse(init.body).name));
+        }
+        return fetch(url, init);
+    };
+    await worldInfo.updateWorldInfoList();
+    worldInfo.selected_world_info.push(name);
+    worldInfo.world_info.charLore = [{ name: 'Review', extraBooks: [name] }];
+    power.persona_description_lorebook = name;
+    worldInfo.worldInfoCache.set(name, JSON.parse(original));
+
+    const invalidBook = { entries: [42, 42].map(id => ({
+        id, keys: ['init'], content: 'Rejected', enabled: true, insertion_order: 100,
+    })) };
+    await worldInfo.importWorldInfo(new window.File([JSON.stringify(invalidBook)], 'existing e.json'));
+    assert.equal(worlds.get(name), original, 'A rejected replacement keeps the original bytes');
+    assert.deepEqual(Array.from(worldInfo.selected_world_info), [name]);
+    assert.equal(power.persona_description_lorebook, name);
+    assert.deepEqual(worldInfo.world_info.charLore, [{ name: 'Review', extraBooks: [name] }]);
+
+    rejectImport = false;
+    const replacement = { entries: { 42: { uid: 42, key: ['init'], content: 'Replacement', disable: false, order: 100 } } };
+    await worldInfo.importWorldInfo(new window.File([JSON.stringify(replacement)], 'existing e.json'));
+    assert.deepEqual([...worlds.keys()], [name], 'Case and accent matches replace the exact existing name');
+    assert.deepEqual(structuredClone(await worldInfo.loadWorldInfo(name)), replacement, 'The editor cache sees the new document');
+    assert.deepEqual(Array.from(worldInfo.selected_world_info), [name]);
+    assert.equal(power.persona_description_lorebook, name);
+});
+
 test('deleting characters keeps a shared lorebook until its last user is deleted', async context => {
     const { window, getModule, startHost, initializeChatRendering } = await createBrowserRuntime();
     context.after(() => window.happyDOM.close());

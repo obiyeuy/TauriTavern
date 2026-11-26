@@ -1,6 +1,7 @@
 import { applyWindowBackdrop } from './window-backdrop.js';
 import { isWindowPortrait, subscribeWindowSnapshot } from './util/window-layout.js';
 import { isMobileHost } from './util/host-identity.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 import { Fuse, Handlebars } from '../lib.js';
 
 import {
@@ -862,7 +863,7 @@ function CreateZenSliders(elmnt) {
             })
             .on('input', () => { editing = true; })
             .on('keydown', event => {
-                if (event.key === 'Enter') {
+                if (event.key === 'Enter' && !isComposingKeyboardEvent(event)) {
                     event.preventDefault();
                     commit();
                 }
@@ -1835,7 +1836,7 @@ export async function loadPowerUserSettings(settings, data) {
     $('#trim_spaces').prop('checked', power_user.trim_spaces);
     $('#continue_on_send').prop('checked', power_user.continue_on_send);
     $('#quick_continue').prop('checked', power_user.quick_continue);
-    $('#quick_impersonate').prop('checked', power_user.quick_continue);
+    $('#quick_impersonate').prop('checked', power_user.quick_impersonate);
     $('#mes_continue').css('display', power_user.quick_continue ? '' : 'none');
     $('#mes_impersonate').css('display', power_user.quick_impersonate ? '' : 'none');
     $('#gestures-checkbox').prop('checked', power_user.gestures);
@@ -1853,8 +1854,8 @@ export async function loadPowerUserSettings(settings, data) {
     $('#experimental_macro_engine').prop('checked', power_user.experimental_macro_engine);
     $('#example_messages_behavior').val(getExampleMessagesBehavior());
     $(`#example_messages_behavior option[value="${getExampleMessagesBehavior()}"]`).prop('selected', true);
-    $('#instruct_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
-    $('#context_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.context_derived);
+    $('#instruct_derived').prop('checked', !!power_user.instruct_derived).parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
+    $('#context_derived').prop('checked', !!power_user.context_derived).parent().find('i').toggleClass('toggleEnabled', !!power_user.context_derived);
     $('#context_size_derived').prop('checked', !!power_user.context_size_derived);
 
     $('#console_log_prompts').prop('checked', power_user.console_log_prompts);
@@ -2380,9 +2381,10 @@ export function fuzzySearchGroups(searchValue, fuzzySearchCaches = null) {
  * @param {string} [options.customStoryString] Custom story string template.
  * @param {InstructSettings} [options.customInstructSettings] Custom instruct settings.
  * @param {ContextSettings} [options.customContextSettings] Custom context settings.
+ * @param {typeof substituteParams} [options.substitute] Macro evaluator for this request.
  * @returns {string} The rendered story string.
  */
-export function renderStoryString(params, { customStoryString = null, customInstructSettings = null, customContextSettings = null } = {}) {
+export function renderStoryString(params, { customStoryString = null, customInstructSettings = null, customContextSettings = null, substitute = substituteParams } = {}) {
     try {
         const instructSettings = structuredClone(customInstructSettings ?? power_user.instruct);
         const contextSettings = structuredClone(customContextSettings ?? power_user.context);
@@ -2399,7 +2401,7 @@ export function renderStoryString(params, { customStoryString = null, customInst
         let output = compiledTemplate(params);
 
         // substitute {{macro}} params that are not defined in the story string
-        output = substituteParams(output, params.user, params.char);
+        output = substitute(output, { name1Override: params.user, name2Override: params.char });
 
         // remove leading newlines
         output = output.replace(/^\n+/, '');

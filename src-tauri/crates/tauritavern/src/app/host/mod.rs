@@ -47,7 +47,7 @@ pub(crate) fn run() {
                 );
             }
         })
-        .build(tauri::generate_context!())
+        .build(tauri::tauri_build_context!())
         .expect("error while building tauri application")
         .run(shutdown::handle_run_event);
 }

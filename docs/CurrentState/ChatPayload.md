@@ -40,6 +40,12 @@
 
 普通摘要缓存的占用随条目及摘要字段增长，不随未知 metadata 体积增长。显式完整 metadata 响应、完整末条正文和搜索的整行读取有各自的数据规模成本；此处不承诺整个聊天链路恒定内存。
 
+### 1.3 原生完整对象查询
+
+`ChatRepository::get_chat()`、角色 typed 列表和全库 typed 查询从所选 JSONL 读取并解释完整 `Chat`，不缓存完整对象。逻辑角色 stem 和旧目录别名可能指向同一物理文件；提交后各读取入口以文件内容为准，不维护按逻辑键分别失效的完整历史副本。目录摘要、备份摘要和内容签名仍承担各自的投影或来源确认职责。
+
+此处是 Rust 原生完整对象查询；第一方当前聊天使用 §2 的完整 payload transport，目录界面优先使用 §1.2 的轻量投影。typed 查询成本随实际读取的完整内容增长。
+
 ## 2. 完整加载与受限 DOM
 
 第一方角色聊天和群聊通过统一的内部 transport 入口加载完整 payload：
@@ -85,7 +91,7 @@ transport 解析完整 JSONL 后直接把同一对象数组交给核心调用方
 
 `saveMetadata()` / `getContext().saveMetadata()` 替换 JSONL header 内的整个 `chat_metadata`，字段删除也会落盘；header 其他字段保留语义，正文逐字节保留。与 SillyTavern 1.18.0 不同，它不顺带保存消息，修改消息的扩展必须显式调用完整保存。
 
-当前聊天的 metadata 与完整保存共用 `persistedChatMetadata()` 和保存队列。该 helper 排除 `lastInContextMessageId`，不修改活 metadata；metadata 保存不遍历或传输消息、不保存消息派生缓存，也不取消待执行的完整保存。integrity 弹窗及恢复留在同一次队列任务内：确认后强制完整保存，拒绝则 reload；缺文件或普通错误不回退。
+当前聊天的 metadata 与完整保存共用 `persistedChatMetadata()` 和保存队列。该 helper 排除 `lastInContextMessageId`，不修改活 metadata；metadata 保存不遍历或传输消息、不保存消息派生缓存，也不取消待执行的完整保存。integrity 弹窗及恢复留在同一次队列任务内：确认后强制完整保存，拒绝则 reload 并传播原 integrity 错误，不能作为已保存的确认；缺文件或普通错误不回退。
 
 metadata 操作要求目标文件存在。新群聊在首次问候扩展事件前绑定 metadata 和 identity、发布初始 header，后续初始化不得覆盖事件修改。扩展的 [`metadata.setExtension()`](../API/Chat.md) 仅修改磁盘目标的指定 namespace，不加入当前聊天队列或合并活 metadata。
 
@@ -105,6 +111,12 @@ JS 与 IPC 成本随提交的 metadata 大小增长；Rust 工作内存随 heade
 - Folder Manager 3.0.15 批量删除最后一条当前聊天后会自行新建，可能多留一份新聊天；此差异已接受。
 
 已知边界：当前聊天没有显式会话；准入不阻止之后新发起的保存，也不覆盖队列外的批量写入（`renamePastChats`、`renameGroupMember`）。
+
+### 3.3 原生追加消息
+
+`ChatRepository::add_message()` 以调用者选择的角色和文件名解析物理路径，持有同一条路径 mutation lock 完成读取、追加与原子发布。header 中的角色显示名用于解析返回对象，不用于重新选择写入目录；多个进程内追加依次读取前一次发布后的文件。
+
+追加复用共同 JSONL reader 和 writer，保留现有 header 与消息中的未知 JSON 字段，只在缺省时补齐原生 header 的 `user_name`、`character_name`、`create_date` 和 `chat_metadata`。文件读取或格式校验失败时停止追加，发布失败向调用方传播；成功后按实际文件路径失效摘要。该原生操作不替代第一方完整保存或 metadata 保存队列，也不提供跨进程冲突隔离。
 
 ## 4. First-class Tool 消息
 
@@ -192,6 +204,7 @@ Rust：
 - character/group stale load 结果不会覆盖新选择。
 - 缺少本地 `chat` 字段的角色在浅层、完整读取和重启后解析为同一个 stem；已有失配聊天按需恢复。
 - 完整保存后重开，编辑、删除、swipe、隐藏范围和 metadata 均保持。
+- 旧目录别名提交 metadata 或完整消息后，typed 查询与完整 payload 查询读取同一份最新文件；原生追加保持调用者选择的文件、未知 JSON 字段及并发追加的全部消息。
 - metadata 保存后 header 字段更新且正文逐字节不变；待保存的消息删除不被取消，新群聊的问候事件可立即保存 metadata。
 - 保存开始后修改消息和嵌套 metadata，不会改变正在传输的快照；后续保存读取新的状态。
 - integrity 冲突与其他失败保持区分；非 integrity 的 host 拒绝以可读 message 到达调用方和兼容路由的 `details`；兼容保存路由保持成功和错误响应语义。

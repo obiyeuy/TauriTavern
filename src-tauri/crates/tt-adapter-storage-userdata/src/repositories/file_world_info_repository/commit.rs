@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use tt_adapter_storage_core::file_system::replace_file_blocking;
+use tt_adapter_storage_core::file_system::persist_file_blocking;
 use tt_domain::errors::DomainError;
 use uuid::Uuid;
 
@@ -55,8 +55,7 @@ pub(super) fn publish(
         .map_err(|error| io_error(path, "create", error))?;
     file.write_all(document.bytes())
         .map_err(|error| io_error(path, "write", error))?;
-    drop(file);
-    replace_file_blocking(path, target)
+    persist_file_blocking(file, path, target)
 }
 
 pub(super) fn io_error(path: &Path, operation: &str, error: io::Error) -> DomainError {

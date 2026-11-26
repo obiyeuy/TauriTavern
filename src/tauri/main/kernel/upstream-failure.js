@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * @typedef {{ code: string; category: string; endpoint: string | null; messageKey: string }} UpstreamFailureDetails
+ * @typedef {{ code: string; category: string; endpoint: string | null; messageKey: string; providerMessage?: string }} UpstreamFailureDetails
  */
 
 /** @type {Readonly<Record<string, string>>} */
@@ -14,6 +14,7 @@ export const UPSTREAM_FAILURE_FALLBACKS = Object.freeze({
     'network.body_interrupted': 'The response was interrupted while it was being read.',
     'network.redirect_rejected': 'The endpoint redirect was rejected. Use the final URL on the same origin and try again.',
     'network.request_failed': 'Network request failed.',
+    'http.not_found': 'The API service returned HTTP 404 for this endpoint.',
 });
 
 /**
@@ -40,7 +41,10 @@ export function asUpstreamFailureDetails(value) {
         ? record.endpoint.trim()
         : null;
 
-    return { code, category, endpoint, messageKey };
+    const providerMessage = typeof record.provider_message === 'string'
+        ? record.provider_message.trim()
+        : (typeof record.providerMessage === 'string' ? record.providerMessage.trim() : '');
+    return { code, category, endpoint, messageKey, ...(providerMessage ? { providerMessage } : {}) };
 }
 
 /**
@@ -113,5 +117,6 @@ export function upstreamFailureFallbackText(details) {
     }
 
     const message = UPSTREAM_FAILURE_FALLBACKS[details.code] || 'Upstream request failed.';
-    return details.endpoint ? `${message} (${details.endpoint})` : message;
+    const text = details.providerMessage ? `${message} ${details.providerMessage}` : message;
+    return details.endpoint ? `${text} (${details.endpoint})` : text;
 }

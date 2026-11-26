@@ -1,5 +1,6 @@
 import { snapshotVariableMacroValues } from '../../variables/values.js';
 import { normalizeMacroResult } from '../../macros/values.js';
+import { isExtensionPromptEnabled } from '../../extension-prompts.js';
 
 export const FROZEN_RUN_INPUT_SNAPSHOT_KIND = 'tauritavern.agentFrozenRunInputSnapshot';
 export const FROZEN_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION = 2;
@@ -171,7 +172,7 @@ export async function snapshotExtensionPromptsForFrozenRun(extensionPrompts) {
             throw new Error(`agent.extension_prompt_invalid: extension prompt ${key} must be an object`);
         }
 
-        if (typeof prompt.filter === 'function' && !await prompt.filter()) {
+        if (!await isExtensionPromptEnabled(prompt)) {
             continue;
         }
 

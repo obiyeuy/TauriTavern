@@ -67,7 +67,7 @@ const registerPromptManagerMigration = () => {
                 delete settings.jailbreak_prompt;
             }
 
-            if (savePreset && presetName) savePreset(presetName, settings, false);
+            if (savePreset && presetName) return savePreset(presetName, settings, false);
         }
     };
 
@@ -1516,19 +1516,20 @@ class PromptManager {
      *
      * @param {Partial<Prompt>} prompt - Prompt object
      * @param original
+     * @param {typeof substituteParams} [substitute] Call-specific evaluator; the instance evaluator remains unchanged.
      * @returns {Prompt} An object with "role" and "content" properties
      */
-    preparePrompt(prompt, original = null) {
+    preparePrompt(prompt, original = null, substitute = typeof this.substituteParams === 'function' ? this.substituteParams : substituteParams) {
         const groupMembers = this.getActiveGroupCharacters();
         const preparedPrompt = new Prompt(prompt);
-        const substitute = typeof this.substituteParams === 'function' ? this.substituteParams : substituteParams;
+        const content = prompt.content ?? '';
 
         if (typeof original === 'string') {
-            if (0 < groupMembers.length) preparedPrompt.content = substitute(prompt.content ?? '', { original, groupOverride: groupMembers.join(', ') });
-            else preparedPrompt.content = substitute(prompt.content, { original });
+            if (0 < groupMembers.length) preparedPrompt.content = substitute(content, { original, groupOverride: groupMembers.join(', ') });
+            else preparedPrompt.content = substitute(content, { original });
         } else {
-            if (0 < groupMembers.length) preparedPrompt.content = substitute(prompt.content ?? '', { groupOverride: groupMembers.join(', ') });
-            else preparedPrompt.content = substitute(prompt.content);
+            if (0 < groupMembers.length) preparedPrompt.content = substitute(content, { groupOverride: groupMembers.join(', ') });
+            else preparedPrompt.content = substitute(content);
         }
 
         return preparedPrompt;
@@ -1781,9 +1782,10 @@ class PromptManager {
     /**
      * Returns a full list of prompts whose content markers have been substituted.
      * @param {string} generationType - The type of generation, e.g., 'continue' or 'quiet'.
+     * @param {typeof substituteParams} [substitute] Call-specific evaluator for all prompts.
      * @returns {PromptCollection} A PromptCollection object
      */
-    getPromptCollection(generationType) {
+    getPromptCollection(generationType, substitute = undefined) {
         generationType = String(generationType || 'normal').toLowerCase().trim();
         const promptCollection = new PromptCollection();
         const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);
@@ -1797,13 +1799,13 @@ class PromptManager {
             }
 
             if (allowedTrigger) {
-                promptCollection.add(this.preparePrompt(prompt));
+                promptCollection.add(this.preparePrompt(prompt, null, substitute));
             } else if (entry.identifier === 'main') {
                 // Some extensions require main prompt to be present for relative inserts.
                 // So we make a GMO-free vegan replacement.
                 const replacementPrompt = structuredClone(prompt);
                 replacementPrompt.content = '';
-                promptCollection.add(this.preparePrompt(replacementPrompt));
+                promptCollection.add(this.preparePrompt(replacementPrompt, null, substitute));
             }
         });
 

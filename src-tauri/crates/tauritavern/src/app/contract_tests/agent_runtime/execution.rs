@@ -985,11 +985,14 @@ async fn agent_runtime_retries_retryable_model_errors_with_real_repositories() {
     let fixture = agent_runtime_fixture_with_results(
         &root,
         vec![
-            Err(ApplicationError::UpstreamFailure(UpstreamFailure::network(
-                UPSTREAM_NETWORK_TIMEOUT,
-                None,
-                "tauritavern.error.network.timeout",
-            ))),
+            Err(
+                tt_domain::errors::DomainError::upstream_failure(UpstreamFailure::network(
+                    UPSTREAM_NETWORK_TIMEOUT,
+                    None,
+                    "tauritavern.error.network.timeout",
+                ))
+                .into(),
+            ),
             Ok(json!({
                 "choices": [{
                     "message": {

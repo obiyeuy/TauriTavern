@@ -28,37 +28,13 @@ impl ChatRepository for FileChatRepository {
 
     async fn save_with_options(&self, chat: &Chat, force: bool) -> Result<(), DomainError> {
         self.ensure_directory_exists().await?;
-        self.write_chat_file(chat, force).await?;
-        if let Some(file_name) = &chat.file_name {
-            let path = self
-                .resolve_character_chat_path(&chat.character_name, file_name)
-                .await?;
-            self.remove_summary_cache_for_path(&path).await;
-        }
+        let path = self.write_chat_file(chat, force).await?;
+        self.remove_summary_cache_for_path(&path).await;
         Ok(())
     }
 
     async fn get_chat(&self, character_name: &str, file_name: &str) -> Result<Chat, DomainError> {
-        // Try to get from cache first
-        let cache_key = self.get_cache_key(character_name, file_name)?;
-
-        {
-            let cache = self.memory_cache.lock().await;
-            if let Some(chat) = cache.get(&cache_key) {
-                return Ok(chat);
-            }
-        }
-
-        // If not in cache, read from file
-        let chat = self.read_chat_file(character_name, file_name).await?;
-
-        // Update cache
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.set(cache_key, chat.clone());
-        }
-
-        Ok(chat)
+        self.read_chat_file(character_name, file_name).await
     }
 
     async fn get_character_chats(&self, character_name: &str) -> Result<Vec<Chat>, DomainError> {
@@ -175,12 +151,6 @@ impl ChatRepository for FileChatRepository {
             DomainError::InternalError(format!("Failed to delete chat file: {}", e))
         })?;
 
-        // Remove from cache
-        let cache_key = self.get_cache_key(character_name, file_name)?;
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.remove(&cache_key);
-        }
         self.remove_summary_cache_for_path(&path).await;
         self.flush_summary_index_best_effort().await;
 
@@ -233,20 +203,6 @@ impl ChatRepository for FileChatRepository {
                 e
             })?;
 
-        // Update cache
-        let old_cache_key = self.get_cache_key(character_name, old_file_name)?;
-        let new_cache_key = self.get_cache_key(character_name, new_file_name)?;
-
-        {
-            let mut cache = self.memory_cache.lock().await;
-            if let Some(mut chat) = cache.get(&old_cache_key) {
-                chat.file_name = Some(committed_file_name.clone());
-                cache.remove(&old_cache_key);
-                cache.set(new_cache_key, chat);
-            } else {
-                cache.remove(&old_cache_key);
-            }
-        }
         self.remove_summary_cache_for_path(&old_path).await;
         self.remove_summary_cache_for_path(&new_path).await;
         self.flush_summary_index_best_effort().await;
@@ -262,14 +218,29 @@ impl ChatRepository for FileChatRepository {
     ) -> Result<Chat, DomainError> {
         tracing::debug!("Adding message to chat: {}/{}", character_name, file_name);
 
-        // Get the chat
-        let mut chat = self.get_chat(character_name, file_name).await?;
-
-        // Add the message
+        let file_name = Self::normalize_jsonl_file_name(file_name)?;
+        let path = self
+            .resolve_character_chat_path(character_name, &file_name)
+            .await?;
+        let _write_guard = self.acquire_payload_mutation_lock(&path).await;
+        let mut objects = read_payload(&path).await?;
+        let mut chat = self.parse_chat_from_payload(character_name, &file_name, &objects)?;
+        let serialized_message = serde_json::to_value(&message).map_err(|error| {
+            DomainError::InternalError(format!("Failed to serialize chat message: {error}"))
+        })?;
         chat.add_message(message);
-
-        // Save the chat
-        self.save(&chat).await?;
+        if objects.is_empty() {
+            objects.push(Value::Object(serde_json::Map::new()));
+        }
+        // The shared reader validates existing headers. Keep their fields and
+        // records while retaining the native writer's missing defaults.
+        let header = objects[0]
+            .as_object_mut()
+            .expect("JSONL reader validated the chat header");
+        Self::fill_chat_header_defaults(&chat, header);
+        objects.push(serialized_message);
+        write_payload(&path, &objects).await?;
+        self.remove_summary_cache_for_path(&path).await;
 
         Ok(chat)
     }
@@ -803,10 +774,6 @@ impl ChatRepository for FileChatRepository {
     }
 
     async fn clear_cache(&self) -> Result<(), DomainError> {
-        {
-            let mut cache = self.memory_cache.lock().await;
-            cache.clear();
-        }
         self.invalidate_content_provenance().await;
         self.clear_summary_cache().await;
         Ok(())

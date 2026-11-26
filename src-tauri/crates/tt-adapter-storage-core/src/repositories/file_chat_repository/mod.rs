@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
 
 use crate::commit_stage::PageGeneration;
 use tokio::sync::{Mutex, RwLock};
@@ -12,7 +11,6 @@ mod backup_codec;
 mod backup_inventory;
 mod backup_restore;
 mod backup_summary;
-mod cache;
 mod chat_commit;
 mod chat_dir_resolver;
 mod chat_metadata;
@@ -38,7 +36,6 @@ mod tests;
 
 use self::backup_inventory::BackupHistoryState;
 use self::backup_summary::BackupSummaryCache;
-use self::cache::MemoryCache;
 use self::summary::SummaryCache;
 use crate::chat_directory_identity::{
     SharedChatAliasStore, chat_alias_path_for_user_dir, new_shared_chat_alias_store,
@@ -84,7 +81,6 @@ pub struct FileChatRepository {
     chat_commit_sessions: crate::commit_stage::CommitSessions<chat_commit::CommitMetadata>,
     path_write_locks: Arc<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>>,
     current_content_signatures: Mutex<ContentSignatureState>,
-    memory_cache: Arc<Mutex<MemoryCache>>,
     summary_cache: Arc<Mutex<SummaryCache>>,
     backup_summary_cache: Arc<Mutex<BackupSummaryCache>>,
     chat_aliases: SharedChatAliasStore,
@@ -156,11 +152,6 @@ impl FileChatRepository {
         max_frame_bytes: u64,
     ) -> Self {
         let chat_commit_staging_dir = backups_dir.with_file_name(".staging").join("chat-commits");
-        // Create a memory cache with 100 chat capacity and 30 minute TTL
-        let memory_cache = Arc::new(Mutex::new(MemoryCache::new(
-            100,
-            Duration::from_secs(30 * 60),
-        )));
         let summary_cache_dir = backups_dir
             .parent()
             .map(|user_dir| user_dir.join("user").join("cache"))
@@ -193,7 +184,6 @@ impl FileChatRepository {
             ),
             path_write_locks,
             current_content_signatures: Mutex::new(ContentSignatureState::default()),
-            memory_cache,
             summary_cache,
             backup_summary_cache,
             chat_aliases,

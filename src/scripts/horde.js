@@ -1,5 +1,6 @@
 import { toUserFacingErrorText } from './util/user-facing-error.js';
 import {
+    abortStatusCheck,
     amount_gen,
     getRequestHeaders,
     main_api,
@@ -102,13 +103,15 @@ async function cancelTask(taskId) {
 
 /**
  * Checks if Horde is online.
+ * @param {AbortSignal} [signal] Cancellation signal for the caller's status query
  * @returns {Promise<boolean>} True if Horde is online, false otherwise
  */
-export async function checkHordeStatus() {
+export async function checkHordeStatus(signal) {
     try {
         const response = await fetch('/api/horde/status', {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),
+            signal,
         });
 
         if (!response.ok) {
@@ -116,21 +119,27 @@ export async function checkHordeStatus() {
         }
 
         const data = await response.json();
+        if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
         return data.ok;
     } catch (error) {
+        if (signal?.aborted) throw error;
         console.error(error);
         return false;
     }
 }
 
 export async function getStatusHorde() {
+    const signal = abortStatusCheck.signal;
     try {
-        const hordeStatus = await checkHordeStatus();
+        const hordeStatus = await checkHordeStatus(signal);
+        if (signal.aborted) return;
         setOnlineStatus(hordeStatus ? t`Connected` : 'no_connection');
     } catch {
+        if (signal.aborted) return;
         setOnlineStatus('no_connection');
     }
 
+    if (signal.aborted) return;
     return resultCheckStatus();
 }
 
@@ -451,14 +460,17 @@ export function initHorde() {
     });
 
     $('#horde_api_key_button').on('click', async function () {
+        const signal = abortStatusCheck.signal;
         try {
             await readSecretState();
+            if (signal.aborted) return;
             const key = String($('#horde_api_key').val()).trim();
             if (!key && !secret_state[SECRET_KEYS.HORDE]) {
                 toastr.warning(t`Please enter your Horde API key`);
                 return;
             }
             if (key) await writeSecret(SECRET_KEYS.HORDE, key);
+            if (signal.aborted) return;
             await getStatusHorde();
         } catch (error) {
             toastr.error(toUserFacingErrorText(error));

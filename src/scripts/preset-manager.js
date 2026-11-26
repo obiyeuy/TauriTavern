@@ -43,6 +43,8 @@ import {
 import { sanitizePortableAgentProfilePackage } from './tauritavern/agent/agent-profile-portable.js';
 import { retargetAgentProfilesAfterPresetRename } from './tauritavern/agent/profile-preset-sync.js';
 import { retargetPresetSkillsAfterRename } from './tauritavern/agent/skill-scope-sync.js';
+import { requireOkResponse } from './util/command-error-utils.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
 const presetManagers = {};
@@ -499,11 +501,7 @@ class PresetManager {
             body: JSON.stringify({ preset, name, apiId: this.apiId }),
         });
 
-        if (!response.ok) {
-            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Preset could not be saved`);
-            console.error('Preset could not be saved', response);
-            throw new Error('Preset could not be saved');
-        }
+        await requireOkResponse(response, 'Save preset');
 
         const data = await response.json();
         name = data.name;
@@ -525,25 +523,20 @@ class PresetManager {
         if (equalsIgnoreCaseAndAccents(oldName, newName)) {
             throw new Error('New name must be different from old name');
         }
-        try {
-            await this.savePreset(newName);
-            await retargetAgentProfilesAfterPresetRename({
-                apiId: this.apiId,
-                oldName,
-                newName,
-            });
-            await retargetPresetSkillsAfterRename({
-                apiId: this.apiId,
-                oldName,
-                newName,
-            });
-            await this.deletePreset(oldName);
-        } catch (error) {
-            toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Preset could not be renamed`);
-            console.error('Preset could not be renamed', error);
-            throw new Error('Preset could not be renamed');
+        await this.savePreset(newName);
+        await retargetAgentProfilesAfterPresetRename({
+            apiId: this.apiId,
+            oldName,
+            newName,
+        });
+        await retargetPresetSkillsAfterRename({
+            apiId: this.apiId,
+            oldName,
+            newName,
+        });
+        if (!await this.deletePreset(oldName)) {
+            throw new Error(t`New preset saved, but the old preset could not be deleted`);
         }
-
     }
 
     /**
@@ -817,6 +810,15 @@ class PresetManager {
             return;
         }
 
+        const response = await fetch('/api/presets/delete', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name: nameToDelete, apiId: this.apiId }),
+        });
+        if (!response.ok) return false;
+
+        // Capture the selection before removing its option.
+        const switchPresets = !name || this.getSelectedPresetName() == name;
         if (this.isKeyedApi()) {
             $(this.select).find(`option[value="${value}"]`).remove();
             const index = preset_names.indexOf(nameToDelete);
@@ -828,23 +830,12 @@ class PresetManager {
             delete preset_names[nameToDelete];
         }
 
-        // switch in UI only when deleting currently selected preset
-        const switchPresets = !name || this.getSelectedPresetName() == name;
-
         if (Object.keys(preset_names).length && switchPresets) {
-            const nextPresetName = Object.keys(preset_names)[0];
-            const newValue = preset_names[nextPresetName];
-            $(this.select).find(`option[value="${newValue}"]`).attr('selected', 'true');
-            $(this.select).trigger('change');
+            const newValue = this.isKeyedApi() ? preset_names[0] : Object.values(preset_names)[0];
+            await this.selectPreset(newValue);
         }
 
-        const response = await fetch('/api/presets/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ name: nameToDelete, apiId: this.apiId }),
-        });
-
-        return response.ok;
+        return true;
     }
 
     /**
@@ -879,9 +870,10 @@ class PresetManager {
         const { settings } = this.getPresetList();
         const selectedName = this.getSelectedPresetName();
         const presetName = name || selectedName;
+        const activeName = this.apiId === 'openai' ? settings.preset_settings_openai : selectedName;
 
-        // Read from settings if the selected preset is the same as the provided name
-        if (settings && selectedName === presetName) {
+        // A selected Chat Completion preset may still be preparing in BEFORE.
+        if (settings && activeName === presetName) {
             const settingsExtensions = ensurePlainObject(settings.extensions || {});
             return path ? lodash.get(settingsExtensions, path, null) : settingsExtensions;
         }
@@ -909,27 +901,23 @@ class PresetManager {
         const { settings } = this.getPresetList();
         const selectedName = this.getSelectedPresetName();
         const presetName = name || selectedName;
+        const activeName = this.apiId === 'openai' ? settings.preset_settings_openai : selectedName;
 
-        // Write to settings if the selected preset is the same as the provided name
-        if (settings && selectedName === presetName) {
-            // Set the value at the specified path
+        const preset = this.getCompletionPresetByName(presetName);
+        if (preset) {
+            const nextPreset = structuredClone(preset);
+            nextPreset.extensions = ensurePlainObject(nextPreset.extensions || {});
+            path ? lodash.set(nextPreset.extensions, path, value) : (nextPreset.extensions = value);
+            await this.savePreset(presetName, nextPreset, { skipUpdate: true });
+            preset.extensions = nextPreset.extensions;
+        }
+
+        // Only confirmed contents of the applied preset update live settings.
+        if (settings && activeName === presetName) {
             settings.extensions = ensurePlainObject(settings.extensions || {});
             path ? lodash.set(settings.extensions, path, value) : (settings.extensions = value);
             await saveSettings();
         }
-
-        // Also update the preset by name
-        const preset = this.getCompletionPresetByName(presetName);
-        if (!preset) {
-            return;
-        }
-
-        // Set the value at the specified path
-        preset.extensions = ensurePlainObject(preset.extensions || {});
-        path ? lodash.set(preset.extensions, path, value) : (preset.extensions = value);
-
-        // Save the updated preset
-        await this.savePreset(presetName, preset, { skipUpdate: true });
     }
 }
 
@@ -1055,7 +1043,12 @@ export async function initPresetManager() {
             return;
         }
 
-        await presetManager.updatePreset();
+        try {
+            await presetManager.updatePreset();
+        } catch (error) {
+            console.error('Failed to update preset:', error);
+            toastr.error(toUserFacingErrorText(error), t`Preset could not be saved`);
+        }
     });
 
     $(document).on('click', '[data-preset-manager-new]', async function () {
@@ -1067,7 +1060,12 @@ export async function initPresetManager() {
             return;
         }
 
-        await presetManager.savePresetAs();
+        try {
+            await presetManager.savePresetAs();
+        } catch (error) {
+            console.error('Failed to save new preset:', error);
+            toastr.error(toUserFacingErrorText(error), t`Preset could not be saved`);
+        }
     });
 
     $(document).on('click', '[data-preset-manager-rename]', async function () {
@@ -1091,11 +1089,17 @@ export async function initPresetManager() {
             return;
         }
 
-        await eventSource.emit(event_types.PRESET_RENAMED_BEFORE, { apiId: apiId, oldName: oldName, newName: newName });
-        const extensions = presetManager.readPresetExtensionField({ name: oldName, path: '' });
-        await presetManager.renamePreset(newName);
-        await presetManager.writePresetExtensionField({ name: newName, path: '', value: extensions });
-        await eventSource.emit(event_types.PRESET_RENAMED, { apiId: apiId, oldName: oldName, newName: newName });
+        try {
+            await eventSource.emit(event_types.PRESET_RENAMED_BEFORE, { apiId: apiId, oldName: oldName, newName: newName });
+            const extensions = presetManager.readPresetExtensionField({ name: oldName, path: '' });
+            await presetManager.renamePreset(newName);
+            await presetManager.writePresetExtensionField({ name: newName, path: '', value: extensions });
+            await eventSource.emit(event_types.PRESET_RENAMED, { apiId: apiId, oldName: oldName, newName: newName });
+        } catch (error) {
+            console.error('Failed to rename preset:', error);
+            toastr.error(toUserFacingErrorText(error), t`Preset could not be renamed`);
+            return;
+        }
 
         if (apiId === 'openai') {
             // This is a horrible mess, but prevents the renamed preset from being corrupted.
@@ -1151,23 +1155,27 @@ export async function initPresetManager() {
             return;
         }
 
-        const fileName = file.name.replace('.json', '').replace('.settings', '');
-        const data = await parseJsonFile(file);
-        const name = data?.name ?? fileName;
-        data.name = name;
-
-        await presetManager.savePreset(name, data);
-        const successToast = !presetManager.isAdvancedFormatting() ? t`Preset imported` : t`Template imported`;
-        toastr.success(successToast);
         try {
-            const { maybePromptForPresetEmbeddedProfiles } = await import('./tauri/agent-profiles/embedded-import.js');
-            await maybePromptForPresetEmbeddedProfiles({ apiId, name, preset: data });
-            const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
-            await maybePromptForPresetEmbeddedSkills({ apiId, name, preset: data });
+            const fileName = file.name.replace('.json', '').replace('.settings', '');
+            const data = await parseJsonFile(file);
+            const name = data?.name ?? fileName;
+            data.name = name;
+
+            await presetManager.savePreset(name, data);
+            const successToast = !presetManager.isAdvancedFormatting() ? t`Preset imported` : t`Template imported`;
+            toastr.success(successToast);
+            try {
+                const { maybePromptForPresetEmbeddedProfiles } = await import('./tauri/agent-profiles/embedded-import.js');
+                await maybePromptForPresetEmbeddedProfiles({ apiId, name, preset: data });
+                const { maybePromptForPresetEmbeddedSkills } = await import('./tauri/agent-skills/embedded-import.js');
+                await maybePromptForPresetEmbeddedSkills({ apiId, name, preset: data });
+            } catch (error) {
+                console.error('Failed to start embedded Agent asset import prompt for preset', error);
+                toastr.error(toUserFacingErrorText(error), t`Agent embedded import failed`);
+            }
         } catch (error) {
-            console.error('Failed to start embedded Agent asset import prompt for preset', error);
-            const message = error instanceof Error ? error.message : String(error || t`Unknown error`);
-            toastr.error(message, t`Agent embedded import failed`);
+            console.error('Failed to import preset:', error);
+            toastr.error(toUserFacingErrorText(error), t`Preset could not be imported`);
         } finally {
             e.target.value = null;
         }
@@ -1189,7 +1197,14 @@ export async function initPresetManager() {
         }
 
         const name = presetManager.getSelectedPresetName();
-        const result = await presetManager.deletePreset();
+        let result;
+        try {
+            result = await presetManager.deletePreset();
+        } catch (error) {
+            console.error('Failed to delete preset:', error);
+            toastr.error(toUserFacingErrorText(error), t`Preset could not be deleted`);
+            return;
+        }
 
         if (result) {
             const successToast = !presetManager.isAdvancedFormatting() ? t`Preset deleted` : t`Template deleted`;
@@ -1215,7 +1230,14 @@ export async function initPresetManager() {
         }
 
         const name = presetManager.getSelectedPresetName();
-        const data = await presetManager.getDefaultPreset(name);
+        let data;
+        try {
+            data = await presetManager.getDefaultPreset(name);
+        } catch (error) {
+            console.error('Failed to read default preset:', error);
+            toastr.error(toUserFacingErrorText(error), t`Failed to restore default preset`);
+            return;
+        }
 
         if (name == 'gui') {
             toastr.info(t`Cannot restore GUI preset`);
@@ -1241,10 +1263,15 @@ export async function initPresetManager() {
                 return;
             }
 
-            await presetManager.deletePreset();
-            await presetManager.savePreset(name, data.preset);
-            const option = presetManager.findPreset(name);
-            await presetManager.selectPreset(option);
+            try {
+                await presetManager.savePreset(name, data.preset);
+                const option = presetManager.findPreset(name);
+                await presetManager.selectPreset(option);
+            } catch (error) {
+                console.error('Failed to restore default preset:', error);
+                toastr.error(toUserFacingErrorText(error), t`Failed to restore default preset`);
+                return;
+            }
             const successToast = !presetManager.isAdvancedFormatting() ? t`Default preset restored` : t`Default template restored`;
             toastr.success(successToast);
         } else {
@@ -1256,8 +1283,14 @@ export async function initPresetManager() {
                 return;
             }
 
-            const option = presetManager.findPreset(name);
-            await presetManager.selectPreset(option);
+            try {
+                const option = presetManager.findPreset(name);
+                await presetManager.selectPreset(option);
+            } catch (error) {
+                console.error('Failed to restore preset:', error);
+                toastr.error(toUserFacingErrorText(error), t`Preset could not be restored`);
+                return;
+            }
             const successToast = !presetManager.isAdvancedFormatting() ? t`Preset restored` : t`Template restored`;
             toastr.success(successToast);
         }
@@ -1277,10 +1310,16 @@ export async function initPresetManager() {
             return;
         }
 
-        const data = await parseJsonFile(file);
-        const fileName = file.name.replace('.json', '');
-        await PresetManager.performMasterImport(data, fileName);
-        e.target.value = null;
+        try {
+            const data = await parseJsonFile(file);
+            const fileName = file.name.replace('.json', '');
+            await PresetManager.performMasterImport(data, fileName);
+        } catch (error) {
+            console.error('Failed to import formatting settings:', error);
+            toastr.error(toUserFacingErrorText(error), t`Could not import formatting settings`);
+        } finally {
+            e.target.value = null;
+        }
     });
 
     $('#af_master_export').on('click', async () => {

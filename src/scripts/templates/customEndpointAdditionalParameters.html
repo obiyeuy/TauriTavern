@@ -1,15 +1,19 @@
 <div class="flex-container flexFlowColumn height100p">
     <h3 data-i18n="Additional Parameters">Additional Parameters</h3>
+    <small class="textAlignLeft" data-i18n="Optional: leave these fields empty to use the default request. Values belong to the selected API source.">Optional: leave these fields empty to use the default request. Values belong to the selected API source.</small>
     <div class="flex1 flex-container flexFlowColumn">
-        <h4 data-i18n="Include Body Parameters">Include Body Parameters</h4>
-        <textarea id="custom_include_body" class="flex1" placeholder="Parameters to be included in the Chat Completion request body (YAML object)&#10;&#10;Example:&#10;top_k: 20&#10;repetition_penalty: 1.1" data-i18n="[placeholder]custom_include_body_desc"></textarea>
+        <h4><label for="custom_include_body" data-i18n="Include Body Parameters">Include Body Parameters</label></h4>
+        <small id="custom_include_body_help" class="textAlignLeft" data-i18n="Enter YAML or JSON key/value pairs. These values replace parameters with the same name.">Enter YAML or JSON key/value pairs. These values replace parameters with the same name.</small>
+        <textarea id="custom_include_body" class="flex1" aria-describedby="custom_include_body_help" placeholder="Parameters to be included in the Chat Completion request body (YAML object)&#10;&#10;Example:&#10;top_k: 20&#10;repetition_penalty: 1.1" data-i18n="[placeholder]custom_include_body_desc"></textarea>
     </div>
     <div class="flex1 flex-container flexFlowColumn">
-        <h4 data-i18n="Exclude Body Parameters">Exclude Body Parameters</h4>
-        <textarea id="custom_exclude_body" class="flex1" placeholder="Parameters to be excluded from the Chat Completion request body (YAML array)&#10;&#10;Example:&#10;- frequency_penalty&#10;- presence_penalty" data-i18n="[placeholder]custom_exclude_body_desc"></textarea>
+        <h4><label for="custom_exclude_body" data-i18n="Exclude Body Parameters">Exclude Body Parameters</label></h4>
+        <small id="custom_exclude_body_help" class="textAlignLeft" data-i18n="List the parameter names to remove, for example - frequency_penalty. Values are not needed.">List the parameter names to remove, for example - frequency_penalty. Values are not needed.</small>
+        <textarea id="custom_exclude_body" class="flex1" aria-describedby="custom_exclude_body_help" placeholder="Parameters to be excluded from the Chat Completion request body (YAML array)&#10;&#10;Example:&#10;- frequency_penalty&#10;- presence_penalty" data-i18n="[placeholder]custom_exclude_body_desc"></textarea>
     </div>
     <div class="flex1 flex-container flexFlowColumn">
-        <h4 data-i18n="Include Request Headers">Include Request Headers</h4>
-        <textarea id="custom_include_headers" class="flex1" placeholder="Additional headers for Chat Completion requests (YAML object)&#10;&#10;Example:&#10;CustomHeader: custom-value&#10;AnotherHeader: custom-value" data-i18n="[placeholder]custom_include_headers_desc"></textarea>
+        <h4><label for="custom_include_headers" data-i18n="Include Request Headers">Include Request Headers</label></h4>
+        <small id="custom_include_headers_help" class="textAlignLeft" data-i18n="Enter YAML or JSON key/value pairs, for example X-Custom-Header: value. These override matching default headers.">Enter YAML or JSON key/value pairs, for example X-Custom-Header: value. These override matching default headers.</small>
+        <textarea id="custom_include_headers" class="flex1" aria-describedby="custom_include_headers_help" placeholder="Additional headers for Chat Completion requests (YAML object)&#10;&#10;Example:&#10;CustomHeader: custom-value&#10;AnotherHeader: custom-value" data-i18n="[placeholder]custom_include_headers_desc"></textarea>
     </div>
 </div>

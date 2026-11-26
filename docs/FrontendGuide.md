@@ -31,6 +31,8 @@
    - 安装后端错误桥并等待 `BackendReadiness`
    - Tauri 就绪后安装窗口快照与窗口背景发布（仅移动端）
 
+核心应用的 `APP_READY` 允许列表和设置先显示。该事件的监听器执行完成后，`extensions.js` 发布 deferred third-party 激活任务；聊天选择、加载和生成共同等待它，激活失败时传播同一错误。桌面恢复上次聊天也在激活后进行，tokenizer/scraper 初始化独立执行。`APP_READY` 启动钩子可以调用聊天 API，所以任务发布前的调用保持原有语义，避免等待自身事件完成。具体顺序见[第三方扩展](CurrentState/ThirdPartyExtensions.md#21-发现与激活)。
+
 ### 2.1 宿主身份
 
 宿主身份 `{ platform, kind }` 由 Rust 按编译目标生成（契约见 `docs/FrontendHostContract.md` §2.2）。前端只通过 `src/scripts/util/host-identity.js` 读取：`hostPlatform()` 返回平台，`isMobileHost()` / `isDesktopHost()` 返回宿主类别。测试由 harness 安装身份。
@@ -89,6 +91,8 @@ src/
 
 ## 4. 核心模块职责
 
+第一方输入与键盘行为继续使用原生控件的数据和事件。`src/scripts/util/keyboard-event.js` 统一识别原生／jQuery 键盘事件的输入法合成状态，以及 WebKit 在合成结束后仍可能给出的 229 标记；React 回调传入 `event.nativeEvent`。应用的显式保存、发送、关闭、菜单移动、搜索和文本编辑快捷动作共用该规则，包括手机页面、主聊天、原生弹窗、参数／模型管理、命令补全、Quick Reply 和 Agent 界面。这些按键不触发应用快捷动作，正常 input/change、修饰键释放和明确确认仍走原有入口，不维护额外的合成状态。CodeMirror 内部键绑定由编辑器处理自己的输入法语义。
+
 ### 4.1 `bootstrap.js`
 
 - 组装模块依赖并执行初始化。
@@ -103,6 +107,52 @@ src/
 - `safeInvoke` 具备可配置的 invoke 策略（dedupe / write-behind / TTL cache），集中在 `src/tauri/main/kernel/invokes/invoke-policies.js`。
 - Host 侧已知的 Rust 命令名收敛为类型：`src/tauri/main/kernel/invokes/tauri-commands.js`（`TauriInvokeCommand`）。
 - 与第三方直接交互的全局符号（如缩略图 helpers）属于 Public Contract（见 `docs/FrontendHostContract.md`）。
+
+命令失败的 `CommandError` 继续通过 invoke 拒绝传给调用者，command 诊断本身不广播界面通知。调用者拥有用途、语言与恢复操作；无法通过返回错误表达的后台或部分成功问题仍使用显式 user-visible 事件。Chat Completion 的 quiet 请求在 HTTP／响应解析失败时拒绝，由原发起者决定呈现；正常聊天和公开错误 parser 的既有选项保持，避免同一 API 测试同时收到解析层和按钮的重复提示。
+
+第一方兼容请求使用 `scripts/util/command-error-utils.js::requireOkResponse()` 检查失败 HTTP 响应并保留错误文本，由操作发起者决定呈现。Quick Reply 的 `performSave()` / `delete()` 和 `quickReplyApi` 的显式保存／删除拒绝失败；延迟界面保存的原 debounce 回调呈现一次失败，`save()` 返回是否成功。新建、导入和复制在写入成功后使用 `publishSaved()` 发布；同名更新保留已有对象和配置引用，不先删除旧数据。
+
+密钥值查询复用 `secrets.js` 的共同请求边界。`findSecret()` 仅将曝光权限拒绝（宿主 401／上游 403）返回为 null；缺失、仓储、传输和响应解析失败继续拒绝，不推断为曝光关闭。查询不标记密钥元数据需要刷新。原复制按钮接管读取与剪贴板失败，成功写入剪贴板后才通知；slash 读取命令按原 quiet 规则呈现一次错误并保留失败的空字符串返回。
+
+内置 API 短测试由原 `test_api_button` 原生按钮持有 disabled 与 aria-busy，替代私有 pending 标志；开始前显示等待文案，finally 恢复原标签，并通过 change 发布状态变化。手机设置行在原控件 change 时刷新，读取同一 busy 与禁用状态；关闭重开继续从原控件派生，dispose 删除订阅。短期 settle 仍用于控件的异步派生，不用于判断请求已结束。原测试参数、prompt-ready／停止事件和结果呈现保持。
+
+API 状态查询共用 `script.js` 的 `abortStatusCheck` 与加载控件入口。取消时立即恢复控件；OpenAI、Text Completion、NovelAI 和 Horde 从连接或密钥提交按钮准备密钥起持有同一信号，状态查询继续使用它，取消后不启动旧查询、发布结果、改写新状态或结束新的加载展示。已经发起的独立密钥操作继续按原保存规则完成，失败仍由按钮提示，不触碰后续查询控件。Text Completion 的后续 props 与模板派生属于同一次查询；NovelAI 订阅读取也在发布数据前检查信号。反向代理验证只验证调用者传入的地址并传播拒绝，状态处理器负责取消感知的错误与收尾，生成参数调用者沿原错误链传播。fetch 及响应体取消沿用 Host interceptor。
+
+当前连接的地址、协议、部署、区域、账户、认证方式或请求头实际修改后，原生字段写入者经同一入口取消旧检查。同值输入、另一个 API/provider/server 的记忆字段，以及只用于生成的请求体参数不取消当前模型列表检查。字段先写入原配置对象，再发布取消状态，监听器读取新配置；没有第二份连接快照。代理预设的选择、保存和删除后的选择共用应用入口，重连先取消旧检查；删除最后一个预设不制造新预设。用户手填模型保留，新查询仍按原连接或预设重连规则发起。
+
+Text Completion 连接按钮先校验当前类型的地址输入，无效时提示并停止本次连接，保留地址和连接中的密钥草稿。有效地址沿原 formatter 规范化，经同一 `input` 写入 settings，再捕获查询信号、准备密钥并请求状态；编辑框、保存值和请求值一致。没有地址字段的固定服务继续原流程，独立密钥提交仍走原保存规则。
+
+群组、表达图像和扩展删除在 HTTP 成功后才继续删除状态或发布成功事件；角色扩展字段在写入成功后才更新内存与卡片 JSON，失败不返回空的批量成功结果。角色与群组的组合刷新先完成两份读取，再一起发布角色数组和重绘；单角色刷新失败继续拒绝。已创建／已保存／已复制内容的刷新失败由界面明确说明部分结果；复制保留已确认的新 avatar。聊天转群组由按钮接管错误，已创建群组后的转换失败保留原错误并说明阶段。普通头像、背景、资源、图库与备份界面拥有各自的失败提示；图库目录建议不可用时保留主体，并显示可继续使用的说明。表情图片读取失败不进入空缓存，周期与 VN debounce 后台刷新使用共同诊断处理，显式界面和脚本操作分别呈现或拒绝。
+
+`PresetManager.savePreset()` 保留原始失败并拒绝，由更新、新建、重命名、导入、高级格式主导入和恢复的实际界面入口呈现；文件导入在 finally 重置输入以允许重试。预设删除保持原布尔结果，在确认成功后才修改列表；恢复默认值直接覆盖保存。预设扩展字段先保存暂存的内容，失败不发布未保存的字段。正则预设的列表调整也使用暂存内容，完整应用后才发布 `isSelected` 和已应用状态；界面失败恢复最后成功的选择，并明确未能完整应用，`/regex-preset` 等待同一应用函数并传播失败。
+
+Connection Manager 的原生选择、reload 和 `/profile` 共用内部 `applySelectedConnectionItem()`。选择写入者统一推进原 version，创建／捕获／删除和应用都经同一 setter；应用入口在异步详情渲染前取得原 application queue／version，详情准备失败不开始字段重放；两种保存对象仅保留各自的字段规则。Profile 重放复用原 managed command helper；可记录的空输入和合法空结果分开声明，两个 ALLOW_EMPTY 字段仍可清空，prompt-post-processing 的 none 成功空结果与 CC 的第二次 api 保持。命令明确失败或拒绝即停止重放和连接，当前成功后才发布原 LOADED；队列在通知前释放，订阅者可应用另一项。`/profile await=true` 等待本次实际 Promise 并传播拒绝，原生选择／reload 和 `await=false` 的后台结果由发起者提示一次；`/api` 的无效输入也遵守原 quiet 参数，公开失败空字符串保持。None 立即使旧重放失效、清理 spinner 并发布原空选择事件，不等待旧写入；保留原 replay queue，使后续真实应用仍等待尚未完成的独立密钥写入。共同错误边界将旧操作的后续失败仍作为取消传播，当前失败保留原原因；版本是唯一取消事实来源；独立密钥写入不回滚，选择引用仍用于详情和重试，不代表所有字段已成功应用。
+
+异步配置详情也核对同一选择 version；Profile／Model Target 只提供模板参数，共用模板读取与结果发布，晚到的旧模板不会覆盖当前选择或 None 的详情。
+
+Custom／OpenCode 格式、代理与分词器的原命令 callbacks 在验证失败时遵守 managed command 已传入的 quiet。配置应用只由原发起者提示一次；普通公开命令仍使用原默认 error／warning 和失败空字符串，getter、合法 setter、匹配规则及公开参数列表保持。
+
+Data Bank 的编辑、移动和 `/db-update` 共用 `chats.js` 的附件替换入口。上传成功后先核对两端位置和原引用，global／character 目标经原 `flushPendingSettingsSave(true)` 确认，chat 目标取消同一 metadata debounce 并等待原保存队列；再次核对后才退役旧附件并刷新列表。上传或保存等待／失败时，原文件、原引用和禁用状态保持，未确认时不返回替代 URL。编辑与命令仍使用原 source，移动使用用户选择的 target；原保存器拥有其失败提示和 integrity 确认，拒绝覆盖仍 reload 并传播原错误。已上传的有效副本保留，避免丢弃唯一编辑内容。neutral 保留原 session／metadata no-op，不计为磁盘 ACK。旧引用在实际删除成功后清理并安排其原保存器，仍不提供跨文件与 settings 的原子事务。
+
+Data Bank 的单条／批量按钮和 `/db-enable`／`/db-disable` 共用 `chats.js` 的 `enableAttachment()`／`disableAttachment()`。两者只修改 canonical `extension_settings.disabled_attachments`，状态变化时安排原 `saveSettingsDebounced()`；同状态重复操作保留 no-op，原界面 callback 仍刷新。启用移除该 URL 的禁用引用，禁用仅加入尚不存在的 URL；原文件和附件引用保持。命令维持原 source／别名／查找、warning 和空字符串结果，磁盘保存仍由原 writer 和 lifecycle flush 完成。
+
+当前聊天位置由 `script.js` 的 `getCurrentChatLocationIdentity()` 从所属角色／群组、聊天名和 integrity 派生，群组不依赖当前发言成员。`chats.js` 的私有 source identity getter 对 chat 委托这条规则，global 独立于当前角色，character 使用 avatar。编辑在原件读取前、移动在源操作和所选目标读取前、抓取在采集前、拖放在确认目标后捕获，并作为同一 uploader／替换函数的可选操作输入传递，省略时在调用处捕获。uploader 在发起上传与发布引用时核对，替换在上传及保存前后核对两端和原引用。位置改变时拒绝本次发布或退役，已上传但未发布的副本通过错误中的实际 URL 提供恢复信息。拖放回调接管拒绝，抓取控件等待原 Promise 并保留原错误原因；没有位置缓存、状态镜像或新宿主接口。
+
+`uploadFileAttachment()` 复用 `requireOkResponse()`，HTTP、传输、正文解析或缺少有效路径时拒绝，本身不通知。注册转换器拒绝就停止，消息与 Data Bank 都不再上传未转换的原内容；成功编码和文件／媒体字段保持原格式。`populateFileAttachment()` 只暂存本次新上传结果，全部准备完成且聊天位置、原消息成员关系与候选仍有效后，才加入原 `message.extra`。失败不发布部分消息附件，已上传副本保留，错误保留原原因和实际路径。Data Bank 仍按文件独立发布，抓取和拖放在后续失败时刷新已确认结果，无新路径时停止，不报告抓取成功。
+
+选择器、嵌入、Data Bank uploader 与消息准备共用私有 `getFileValidationError()`。它保留原 MIME、350 MiB 非媒体限制、binary 与 converter 规则；已知不支持返回 Error，允许返回 null，实际读取失败拒绝原错误。超限先按元数据判断，媒体与已注册 converter 的格式不为无效的 binary 判定读取正文；未知格式读取后仍使用当前 converter 注册结果决定是否允许。准备在本次文件读／上传前再次校验并核对目标，API 不依赖选择器的验证进度；媒体和普通文件继续原 Data URL 字节路径，已注册的转换格式仅由实际 converter 读取并编码转换结果，不再预读随后被替换的 Base64。未知格式的原始读取结束后仍查看当前注册表，保留等待期间新增 converter 的行为。原字节编码与上传格式保持，实际转换／读取失败沿原错误 owner 拒绝。主输入／嵌入拥有原 error 加 warning 的已知拒绝提示，Data Bank 确认 source 后呈现单条说明并保持无路径返回。
+
+主文件 form 在验证等待前从捕获的 File 数组显示名字、数量和大小，绑定活动聊天位置；只保留当前选择的一个 `CHAT_CHANGED` 订阅，同一聊天的 reload 保留该订阅，实际位置变化后清理。新选择立即通过原 emitter 解除旧订阅；reset 默认动作结束后，实际输入为空才隐藏文件行并解除订阅，取消 reset 保留原选择、文件行和订阅。已经进入事件派发队列的旧回调也核对当前订阅引用，不能清空后来选择的文件。所有等待后的提示和清理仅作用于仍匹配该选择／位置的输入，旧验证结果不会覆盖新标签或清空新草稿。当前读取失败由控件提示一次，保留真实选择与文件行以供重试／清理；欢迎页的未绑定草稿仍可随首次打开的聊天继续。嵌入在验证成功或拒绝后先核对原消息、候选与文件选择，再处理结果。
+
+`sendMessageAsUser()` 在 token 读取等异步前捕获聊天位置和文件选择，作为同一准备函数的操作输入，避免计数等待后发送后来选择的文件；仅附件准备失败且同一聊天的文字框为空时恢复 regex 改写前的原消息参数。可选的 `onAttachmentError` 只由普通生成和群聊实际入口传入，接管准备失败；Agent 沿原外层入口通知，API／slash 默认只拒绝，保存失败仍由原 writer 呈现。嵌入在打开选择器前绑定原消息和候选，校验后核对并传递原文件选择，避免旧校验读取另一条消息的新选择；完成时从 canonical chat 重新取得事件楼层编号。主附件 form 与隐藏 embed input 分别拥有清理范围，只清理仍与本次选择一致的输入，失败保留选择，新文字和文件草稿保持。
+
+普通与无激活成员的群聊发送都在等待用户消息准备前消费原文字输入；群聊不在成功返回后再清空，以保留等待期间写下的新草稿。失败恢复继续使用同一准备边界。
+
+文件删除请求共用 `chats.js` 的私有 `deleteFileAttachmentFromServer()`，HTTP 检查与成功的 `FILE_ATTACHMENT_DELETED` 事件只有一处。原 `deleteFileFromServer(url, silent)` 保持布尔结果，`silent` 适用于 HTTP 和传输失败；消息文件控件消费成功结果后才移除引用并保存。Data Bank 删除、替换退役和 slash 等待同一请求并传播失败，原控件或 executor 呈现一次原因，失败保留引用与 disabled。单项和批量确认前捕获来源，删除后再次核对；位置变化时停止新的引用修改，已经删除的文件明确给出路径和部分结果。批量按钮等待操作、按实际结果重绘，保留剩余已选项以便重试。私有 `removeAttachmentReference()` 同时维护原 bucket、disabled 和保存调度，character 删除也安排 settings 保存；核验明确不存在只调用这处引用清理，不再发 DELETE 404 或伪造删除事件。
+
+`getFileAttachment()` 成功返回原文件字符串（包括空字符串），HTTP、传输和响应体读取失败沿 `requireOkResponse()`／原 fetch 拒绝，不弹通知或返回缺省内容。Data Bank 的查看、编辑、下载、移动和消息文件控件接管一次提示；`/db-get` 与核心聊天组装沿原错误链传播。发送、继续、再生成和模拟共用附件组装边界呈现一次失败，quiet 请求交由原调用者呈现。附件全文组装完成后才修改 `fileLength`；向量检索也在单条消息的必要读取和检索成功后才替换正文，失败由原 `rearrangeChat()` 提示跳过。显式全部文件入库按钮接管读取失败，已有索引先确认后跳过读取。
+
+Vector 扩展的私有 `vectorizeFile()` 成功确认入库、失败传播原错误／cause，进度由 `finally` 清理，没有 false 或内部失败通知。消息和 Data Bank 不查询未确认的入库结果；生成由原 `rearrangeChat()` 提示跳过并保留该消息全文，`/db-ingest` 和 `/db-search` 经原 executor 错误链拒绝。全部文件按钮保留普通单文件失败后的继续与部分失败提示，原 source abort 仍停止后续文件。成功检索时，工作消息的 `mes` 和新 `extra.fileLength` 同时使用实际 chunks 前缀（含两个换行），不回写共享 canonical extra；后续查询沿原 `getQueryText()` 截取，用户问题不会被旧长度裁掉，空命中保持两个换行的前缀。
 
 #### 4.2.1 `window.__TAURITAVERN__.api.chat`（扩展/记忆类插件 API）
 
@@ -203,6 +253,36 @@ src/
 - 请求参数的移除状态保存在预设 `extensions.tauritavern.omit_params`，本地区块显隐仅保存在设备上。旧预设保持原行为，移除范围限于可选参数，不能删除 `messages`、`model` 等结构字段。
 - Prompt 组装和生成判断使用本次生效设置，`createGenerationParameters()` 出口统一省略字段；用户显式配置的 Additional Parameters 仍拥有最终覆盖权。
 - JSON 视图只编辑当前格式可用的参数，非法输入整体不应用；它不是最终请求预览，后续仍遵循渠道与模型的转换规则。
+
+### 6.5 请求级生成长度
+
+`generateRawData()`、`generateRaw()` 和 `generateQuietPrompt()` 的 `responseLength` 沿本次请求传递。省略或传入无效覆盖时，使用请求开始时的用户设置；临时生成不修改 `amount_gen` 或 `oai_settings.openai_max_tokens`。群聊和同次工具递归继续使用该请求的预算，新的独立生成重新读取用户设置。
+
+Chat Completion 的 prompt 裁剪与最终参数准备消费有效设置副本；Text Completion 的参数构造直接消费请求长度。第一方提示词、角色字段、世界书、指令、stop、prefill 和 Additional Parameters 使用同一请求预算的宏环境，流式 stop 缓存、回复及多回复清洗继续使用该 evaluator；live 变量的读写保持原语义。PromptManager 接受调用级 evaluator，不临时替换共享实例的设置或函数。
+
+保存和退出 flush 只等待自己的持久化任务，不等待临时生成恢复全局设置。现有生成事件及扩展修改最终参数的入口保持；Additional Parameters 和 settings-ready 仍可以按原规则覆盖最终请求。
+
+### 6.6 条件扩展提示词
+
+`extension-prompts.js` 拥有条件谓词和分组文本查询；script.js 的公开按名/分组 getter、CC 与 frozen Run capture 使用同一 async 条件规则。查询先选择位置、非空值、深度和角色，再在原对象上调用并等待 `prompt.filter()`，最后按 key 排序组装、trim/wrap 并使用请求 evaluator 展开宏。按名与冻结捕获仍在值转换前执行条件；同步 `{{outlet}}` 只读取文本。
+
+CC 的已知名字映射、相对插入顺序和 vectors/ChromaDB 相对提示词的 system 角色由 `KNOWN_EXTENSION_PROMPTS` 统一表达。真实 Generate 只为 TC 准备 Story String 与 anchors；CC 相对阶段只准备 BEFORE_PROMPT/IN_PROMPT。IN_CHAT 在主提示词宏完成后执行条件：同名 PromptManager 条目具有有效 ABSOLUTE/ATTACH 位置时，保留其角色、深度、顺序及附加覆盖，内容只由该条目承载；其余提示词走实际深度查询。本次交给 PromptManager 的 key 随准备结果传给查询，排除重复路径，不保存或缓存条件结果。
+
+NONE 不加入生成。条件 false 不求值该提示词的宏，条件拒绝与其他未知组装错误传播给调用者，不发送部分提示词。frozen Run capture 保留既有捕获点的主提示词宏前条件求值，保存后的输入直接使用该结果。
+
+### 6.7 注入深度遍历
+
+`getExtensionPromptMaxDepth()` 是允许上限，仍返回 10000。TC 和 CC 使用 `extension-prompts.js` 的 `getExtensionPromptDepths()` 遍历实际可匹配的深度，保留原插入索引、角色顺序、order bucket、continue 和请求 evaluator。CC 从已准备的 PromptManager 条目提供额外深度，并排除其已经承载的扩展 key。
+
+iterator 在每个实际深度后重新读取原 source，不预计算固定列表，也不缓存条件。位置、非空值、角色和整数深度决定候选；`undefined` 深度保留逐层 wildcard，`undefined` 角色保留原匹配语义。条件仍由实际文本查询执行，因此条件新增未来深度或改变自己的深度时，后续遍历能看到变化。性能数据和输出核对见 `docs/superpowers/plans/2026-11-25-chat-injection-depths.md`；本地准备测量不代表 Android 冷启动或网络延迟。
+
+### 6.8 自定义 API 地址预览
+
+`tauritavern/custom-endpoint.js` 拥有协议后缀与预览。非空基础地址只接受后端已有的 HTTP/HTTPS、无账号密码、无查询或片段规则；使用 URL 的序列化结果展示实际主机、端口和路径，保留版本路径、已编码的路径字符及 Gemini 模型/流式后缀。空字段仍显示设置占位符，不支持的输入返回 `url: null`，唯一显示入口 `updateCustomEndpointPreview()` 呈现本地化填写说明，不能删除非法部分再显示成可用端点。
+
+这是填写反馈，不是连接成功证明。用户设置、实际网络校验与生成继续由原入口及后端拥有，没有新增端点切换、重试或保存机制。Custom/Azure 校验失败的诊断只记录来源及无效状态，不输出原始输入，避免误填密钥进入日志。回归覆盖空 `?`/`#` 和编码后的路径分隔字符，避免把 URL getter 的空字符串误当作没有查询或片段。
+
+附加参数窗口沿用 `customEndpointAdditionalParameters.html` 和所选 source bucket 的原生 input／保存入口。三个字段都有关联标签和持续可见的格式说明；中文版示例保留 YAML 的 ASCII 语法。小屏使用 Popup 现有的纵向滚动，不维护另一份字段或校验状态，YAML／JSON 解析、覆盖顺序和持久化契约保持。
 
 ## 7. 插件系统前端适配
 

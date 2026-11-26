@@ -1,4 +1,5 @@
 import { power_user } from '../power-user.js';
+import { isComposingKeyboardEvent } from '../util/keyboard-event.js';
 import { debounce, escapeRegex } from '../utils.js';
 import { AutoCompleteOption } from './AutoCompleteOption.js';
 import { AutoCompleteFuzzyScore } from './AutoCompleteFuzzyScore.js';
@@ -795,6 +796,7 @@ export class AutoComplete {
      * @param {KeyboardEvent} evt The event.
      */
     async handleKeyDown(evt) {
+        if (isComposingKeyboardEvent(evt)) return;
         // autocomplete is shown and cursor at end of current command name (or inside name and typed or forced)
         if (this.isActive && this.isReplaceable) {
             // actions in the list

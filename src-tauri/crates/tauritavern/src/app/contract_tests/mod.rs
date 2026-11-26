@@ -568,9 +568,11 @@ fn character_book(name: &str, content: &str) -> Value {
     json!({
         "name": name,
         "entries": [{
-            "uid": 1,
-            "key": ["alpha"],
+            "id": 1,
+            "keys": ["alpha"],
             "content": content,
+            "enabled": true,
+            "insertion_order": 100,
             "extensions": {}
         }],
         "extensions": {}

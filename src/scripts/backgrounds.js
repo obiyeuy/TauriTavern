@@ -12,6 +12,8 @@ import { groups, selected_group } from './group-chats.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { deleteMediaFromServer } from './chats.js';
 import { consumeStartupPrefetch, startStartupPrefetch } from './tauri/startup/startup-prefetch-registry.js';
+import { requireOkResponse } from './util/command-error-utils.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 
 const BG_METADATA_KEY = 'custom_background';
 const LIST_METADATA_KEY = 'chat_backgrounds';
@@ -94,15 +96,6 @@ const BG_TABS = Object.freeze({
     [BG_SOURCES.GLOBAL]: 'bg_global_tab',
     [BG_SOURCES.CHAT]: 'bg_chat_tab',
 });
-
-async function requireOkResponse(response, action) {
-    if (response.ok) {
-        return;
-    }
-
-    const error = await response.text();
-    throw new Error(error || `${action} failed: ${response.status}`);
-}
 
 /**
  * Global IntersectionObserver instance for lazy loading backgrounds
@@ -1745,6 +1738,7 @@ async function uploadBackground(formData) {
         bg = await response.text();
     } catch (error) {
         console.error('Error uploading background:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not upload background`);
         return;
     }
 
@@ -1759,6 +1753,7 @@ async function uploadBackground(formData) {
         highlightNewBackground(bg);
     } catch (error) {
         console.error('Background was uploaded but the UI could not be refreshed:', error);
+        toastr.warning(toUserFacingErrorText(error), t`Background uploaded, but could not be refreshed`);
     }
 }
 

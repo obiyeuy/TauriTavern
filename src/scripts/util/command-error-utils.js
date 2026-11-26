@@ -39,6 +39,29 @@ export function getCommandErrorMessage(value) {
     return stripCommandErrorPrefixes(extractErrorText(value));
 }
 
+/**
+ * Reject a failed compatibility request without changing a successful response body.
+ * The operation's caller owns the UI notification.
+ * @param {Response} response
+ * @param {string} action
+ * @returns {Promise<void>}
+ */
+export async function requireOkResponse(response, action) {
+    if (response.ok) {
+        return;
+    }
+
+    const text = await response.text();
+    let detail = text;
+    try {
+        const value = JSON.parse(text);
+        detail = getCommandErrorMessage(value?.error ?? value);
+    } catch {
+        detail = getCommandErrorMessage(text);
+    }
+    throw new Error(detail || `${action} failed: ${response.status}`);
+}
+
 export function stripCommandErrorPrefixes(message) {
     let normalized = String(message || '').trim();
     if (!normalized) {

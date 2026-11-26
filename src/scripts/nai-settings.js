@@ -14,6 +14,7 @@ import {
     setGenerationParamsFromPreset,
     setOnlineStatus,
     startStatusLoading,
+    substituteParams,
 } from '../script.js';
 import { power_user } from './power-user.js';
 import { getTextTokens, tokenizers } from './tokenizers.js';
@@ -171,14 +172,16 @@ export function getNovelUnlimitedImageGeneration() {
 }
 
 export async function loadNovelSubscriptionData() {
+    const signal = abortStatusCheck.signal;
     const result = await fetch('/api/novelai/status', {
         method: 'POST',
         headers: getRequestHeaders(),
-        signal: abortStatusCheck.signal,
+        signal,
     });
 
     if (result.ok) {
         const data = await result.json();
+        if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
         setNovelData(data);
     }
 
@@ -450,13 +453,13 @@ function getBadWordPermutations(text) {
     return result.filter(onlyUnique);
 }
 
-export function getNovelGenerationData(finalPrompt, _settings, maxLength, isImpersonate, isContinue, _cfgValues, type) {
+export function getNovelGenerationData(finalPrompt, _settings, maxLength, isImpersonate, isContinue, _cfgValues, type, { substitute = substituteParams } = {}) {
     console.debug('NovelAI generation data for', type);
     const isKayra = nai_settings.model_novel.includes('kayra');
     const isErato = nai_settings.model_novel.includes('erato');
 
     const tokenizerType = getTokenizerTypeForModel(nai_settings.model_novel);
-    const stoppingStrings = getStoppingStrings(isImpersonate, isContinue);
+    const stoppingStrings = getStoppingStrings(isImpersonate, isContinue, 'novel', { substitute });
 
     // Llama 3 tokenizer, huh?
     if (isErato) {
@@ -785,8 +788,10 @@ $('#nai_preamble_restore').on('click', function () {
 });
 
 export async function getStatusNovel() {
+    const signal = abortStatusCheck.signal;
     try {
         const result = await loadNovelSubscriptionData();
+        if (signal.aborted) return;
 
         if (!result) {
             throw new Error('Could not load subscription data');
@@ -794,9 +799,11 @@ export async function getStatusNovel() {
 
         setOnlineStatus(getNovelTier());
     } catch {
+        if (signal.aborted) return;
         setOnlineStatus('no_connection');
     }
 
+    if (signal.aborted) return;
     return resultCheckStatus();
 }
 
@@ -814,13 +821,16 @@ export function initNovelAISettings() {
     $('#api_button_novel').on('click', async function (e) {
         e.stopPropagation();
         if (isConnectionValidationSuspended()) return;
+        const signal = abortStatusCheck.signal;
 
         try {
             await readSecretState();
+            if (signal.aborted) return;
             const api_key_novel = String($('#api_key_novel').val()).trim();
 
             if (api_key_novel.length) {
                 await writeSecret(SECRET_KEYS.NOVEL, api_key_novel);
+                if (signal.aborted) return;
             }
 
             if (!secret_state[SECRET_KEYS.NOVEL]) {
@@ -832,7 +842,7 @@ export function initNovelAISettings() {
             await getStatusNovel();
         } catch (error) {
             toastr.error(toUserFacingErrorText(error));
-            resultCheckStatus();
+            if (!signal.aborted) resultCheckStatus();
         }
     });
 

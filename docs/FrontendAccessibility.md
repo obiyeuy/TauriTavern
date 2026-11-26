@@ -64,6 +64,8 @@ ARIA 是既有业务状态的投影，由该状态的写入者同步更新：选
 
 使用密钥的 Connect 先读取密钥状态，再保存新输入并连接；失败只结束本次操作，不重写或回滚已保存的密钥。`startStatusLoading` / `stopStatusLoading` 统一管理忙碌状态、Cancel 的显隐（`displayNone`）以及 Connect 与 Cancel 之间的焦点；`displayOnlineStatus` 是状态文字的唯一写入者。
 
+内置 Test Message 使用原生 button，从扩展准备前到请求结束持有 disabled、aria-busy 与等待文案，finally 恢复。原控件通过 change 通知手机设置页；action row 从它派生可用性与等待文字，成功或失败都立即恢复，重开读取同一状态。页面 dispose 移除 change 订阅，没有第二份请求状态或完成轮询。
+
 ## Drawer
 
 [`drawers.js`](../src/scripts/drawers.js) 管理展开状态、ARIA 关联和变化订阅。

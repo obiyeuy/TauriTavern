@@ -2,6 +2,7 @@ import { getPreviewString, initVoiceMap, saveTtsProviderSettings } from './index
 import { event_types, eventSource, getRequestHeaders } from '../../../script.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { getBase64Async } from '../../utils.js';
+import { isComposingKeyboardEvent } from '../../util/keyboard-event.js';
 
 export { MiniMaxTtsProvider };
 
@@ -561,7 +562,7 @@ class MiniMaxTtsProvider {
         // Keyboard event listeners
         const ENTER_KEY = 13;
         $('#minimax_custom_model_id, #minimax_custom_model_name').on('keypress', (e) => {
-            if (e.which === ENTER_KEY) {
+            if (e.which === ENTER_KEY && !isComposingKeyboardEvent(e)) {
                 try {
                     this.addCustomModel();
                 } catch (error) {
@@ -572,7 +573,7 @@ class MiniMaxTtsProvider {
         });
 
         $('#minimax_custom_voice_name, #minimax_custom_voice_id').on('keypress', (e) => {
-            if (e.which === ENTER_KEY) {
+            if (e.which === ENTER_KEY && !isComposingKeyboardEvent(e)) {
                 try {
                     this.addCustomVoice();
                 } catch (error) {

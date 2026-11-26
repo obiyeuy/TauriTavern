@@ -1,8 +1,9 @@
 import { power_user } from './power-user.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 export function initInputMarkdown() {
     $(document).on('keydown', 'textarea.mdHotkeys', function (e) {
-        if (!power_user.enable_md_hotkeys) { return; }
+        if (!power_user.enable_md_hotkeys || isComposingKeyboardEvent(e)) { return; }
 
         // Ensure that the element is a textarea
         let textarea = this;

@@ -43,8 +43,10 @@ fn main() {
     };
     println!("cargo:rerun-if-changed=capabilities");
 
+    // Generate assets before the host compilation so Cargo can reuse its result.
     tauri_build::try_build(
         tauri_build::Attributes::new()
+            .codegen(tauri_build::CodegenContext::new())
             .capabilities_path_pattern(capabilities)
             .plugin(
                 "speech-synthesis",

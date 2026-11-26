@@ -1,6 +1,5 @@
 mod card_contract;
 mod lorebook_adoption;
-mod lorebook_codec;
 
 use crate::dto::character_dto::{
     BulkMergeCharacterCardDataDto, BulkMergeCharacterCardDataResultDto, CharacterChatDto,
@@ -27,7 +26,7 @@ use tt_ports::repositories::character_repository::{CharacterRepository, ImageCro
 use tt_ports::repositories::chat_repository::ChatRepository;
 use tt_ports::repositories::world_info_repository::WorldInfoRepository;
 
-use self::lorebook_codec::world_info_to_character_book;
+use tt_domain::models::character_book::world_info_to_character_book;
 
 /// Service for character management
 pub struct CharacterService {

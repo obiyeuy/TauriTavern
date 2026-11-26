@@ -47,6 +47,19 @@ export function getUserFacingErrorMessage(error, fallbackMessage = 'Chat complet
             ),
         );
     }
+    if (details.code === 'http.not_found') {
+        lines.push(
+            '',
+            translateSillyTavern(
+                'tauritavern.error.http.not_found_action',
+                'Check the service Base URL, API protocol and model ID. A working model list does not confirm the generation protocol. OpenAI-compatible services usually use /chat/completions; /responses requires explicit service support.',
+            ),
+        );
+    }
+
+    if (details.providerMessage) {
+        lines.push('', details.providerMessage);
+    }
 
     if (details.endpoint) {
         lines.push(
@@ -70,6 +83,9 @@ export function buildLegacyErrorPayload(error) {
         payload.message_key = details.messageKey;
         if (details.endpoint) {
             payload.endpoint = details.endpoint;
+        }
+        if (details.providerMessage) {
+            payload.provider_message = details.providerMessage;
         }
     }
 

@@ -17,7 +17,7 @@ test('Popup naming and result controls', async context => {
         await context.test('expanded editors write through native and jQuery input handlers', async () => {
             getModule('scripts/chats.js').namespace.initChatUtilities();
             const fixture = document.createElement('div');
-            fixture.innerHTML = '<div id="expanded-editor-source" contenteditable="true"></div><button type="button" class="editor_maximize" data-for="expanded-editor-source"></button>';
+            fixture.innerHTML = '<div id="expanded-editor-source" contenteditable="true"></div><button type="button" class="editor_maximize" data-for="expanded-editor-source" data-tab="true"></button>';
             document.body.append(fixture);
             const source = fixture.querySelector('[contenteditable]');
             const values = {};
@@ -31,10 +31,63 @@ test('Popup naming and result controls', async context => {
                 editor.value = 'Edited greeting';
                 editor.dispatchEvent(new window.Event('input', { bubbles: true }));
                 assert.deepEqual(values, { native: 'Edited greeting', jquery: 'Edited greeting' });
+                editor.setSelectionRange(editor.value.length, editor.value.length);
+                for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+                    editor.dispatchEvent(new window.KeyboardEvent('keydown', {
+                        key: 'Tab', bubbles: true, cancelable: true, ...flags,
+                    }));
+                    assert.equal(editor.value, 'Edited greeting');
+                }
+                editor.dispatchEvent(new window.KeyboardEvent('keydown', {
+                    key: 'Tab', bubbles: true, cancelable: true,
+                }));
+                assert.equal(editor.value, 'Edited greeting\t');
             } finally {
                 await popup.completeAffirmative();
                 await click.result;
                 fixture.remove();
+            }
+        });
+
+        await context.test('autocomplete keeps the current draft and option during composing keys, then accepts ordinary navigation', async () => {
+            await load('scripts/autocomplete/AutoComplete.js');
+            await load('scripts/autocomplete/AutoCompleteNameResult.js');
+            const { AutoComplete } = getModule('scripts/autocomplete/AutoComplete.js').namespace;
+            const { AutoCompleteOption } = getModule('scripts/autocomplete/AutoCompleteOption.js').namespace;
+            const { AutoCompleteNameResult } = getModule('scripts/autocomplete/AutoCompleteNameResult.js').namespace;
+            const input = document.createElement('textarea');
+            input.value = '/选';
+            document.body.append(input);
+            input.focus();
+            const autocomplete = new AutoComplete(input, () => true, async () => new AutoCompleteNameResult(
+                '选', 1, [new AutoCompleteOption('选项一'), new AutoCompleteOption('选项二')],
+            ));
+            try {
+                await autocomplete.show(true);
+                autocomplete.render();
+                const list = document.querySelector('.autoComplete');
+                for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+                    for (const key of ['ArrowDown', 'ArrowUp', 'Escape', 'Enter', 'Tab']) {
+                        input.dispatchEvent(new window.KeyboardEvent('keydown', {
+                            key, bubbles: true, cancelable: true, ...flags,
+                        }));
+                        assert.equal(input.value, '/选');
+                        assert.equal(list.isConnected, true);
+                        assert.equal(list.querySelector('.selected')?.getAttribute('data-name'), '选项一');
+                    }
+                }
+                input.dispatchEvent(new window.KeyboardEvent('keydown', {
+                    key: 'ArrowDown', bubbles: true, cancelable: true,
+                }));
+                assert.equal(list.querySelector('.selected').getAttribute('data-name'), '选项二');
+                input.dispatchEvent(new window.KeyboardEvent('keydown', {
+                    key: 'Enter', bubbles: true, cancelable: true,
+                }));
+                assert.ok(input.value.startsWith('/选项二'));
+            } finally {
+                autocomplete.hide();
+                window.removeEventListener('resize', autocomplete.handleWindowResize);
+                input.remove();
             }
         });
 

@@ -1,6 +1,7 @@
 // Move chat functions here from script.js (eventually)
 
 import { getEditorName } from './dom-handlers.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 import { Popper, css, DOMPurify } from '../lib.js';
 import {
     addCopyToCodeBlocks,
@@ -11,10 +12,13 @@ import {
     eventSource,
     event_types,
     getCurrentChatId,
+    getCurrentChatLocationIdentity,
     getRequestHeaders,
     name2,
     reloadCurrentChat,
     saveSettingsDebounced,
+    flushPendingSettingsSave,
+    saveMetadata,
     this_chid,
     saveChatConditional,
     chat_metadata,
@@ -50,7 +54,7 @@ import {
     isSameFile,
     clamp,
 } from './utils.js';
-import { extension_settings, renderExtensionTemplateAsync, saveMetadataDebounced } from './extensions.js';
+import { cancelDebouncedMetadataSave, extension_settings, renderExtensionTemplateAsync, saveMetadataDebounced } from './extensions.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { ScraperManager } from './scrapers.js';
 import { DragAndDropHandler } from './dragdrop.js';
@@ -60,6 +64,7 @@ import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
 import { showCodeMirrorEditorFullscreen } from './tauri/codemirror-editor.js';
+import { requireOkResponse } from './util/command-error-utils.js';
 
 /**
  * @typedef {Object} FileAttachment
@@ -82,6 +87,9 @@ const ATTACHMENT_SOURCE = {
     CHARACTER: 'character',
     CHAT: 'chat',
 };
+
+/** @type {(() => void) | undefined} Current composer selection's actual chat subscription. */
+let fileAttachmentChatChangeListener;
 
 /**
  * @type {Record<string, ConverterFunction>} File converters
@@ -195,29 +203,50 @@ export async function unhideChatMessage(messageId, _messageBlock) {
 }
 
 /**
- * Adds a file attachment to the message.
+ * Prepares the selected files before publishing any new message attachments.
  * @param {ChatMessage} message Message object
- * @returns {Promise<void>} A promise that resolves when file is uploaded.
+ * @param {string} [inputId] File input containing this operation's selection
+ * @param {string} [locationIdentity] Chat location captured before the caller's IO
+ * @param {File[]} [selectedFiles] Selection captured before earlier caller IO
+ * @returns {Promise<void>} Rejects preparation failures; the caller owns presentation.
  */
-export async function populateFileAttachment(message, inputId = 'file_form_input') {
+export async function populateFileAttachment(message, inputId = 'file_form_input', locationIdentity = getCurrentChatLocationIdentity(), selectedFiles) {
+    if (!message) return;
+    const wasInChat = chat.includes(message);
+    const swipeId = message.swipe_id;
+    const newFiles = [];
+    const newMedia = [];
+    const assertLocation = () => {
+        if (locationIdentity !== getCurrentChatLocationIdentity()
+            || (wasInChat && (!chat.includes(message) || message.swipe_id !== swipeId))) {
+            throw new Error(t`The attachment location changed. Please retry from its current location.`);
+        }
+    };
     try {
-        if (!message) return;
-        if (!message.extra || typeof message.extra !== 'object') message.extra = {};
+        assertLocation();
         const fileInput = document.getElementById(inputId);
         if (!(fileInput instanceof HTMLInputElement)) return;
+        const files = Array.from(selectedFiles ?? fileInput.files);
+        if (files.length === 0) return;
+        const mediaFolder = name2;
 
-        for (const file of fileInput.files) {
+        for (const file of files) {
+            assertLocation();
+            const validationError = await getFileValidationError(file);
+            assertLocation();
+            if (validationError) throw validationError;
+
             const slug = getStringHash(file.name);
             const fileNamePrefix = `${Date.now()}_${slug}`;
-            const fileBase64 = await getBase64Async(file);
-            let base64Data = fileBase64.split(',')[1];
             const extension = getFileExtension(file);
 
             const mediaType = MEDIA_TYPE.getFromMime(file.type);
             if (mediaType) {
-                const imageUrl = await saveBase64AsFile(base64Data, name2, fileNamePrefix, extension);
-                if (!Array.isArray(message.extra.media)) {
-                    message.extra.media = [];
+                const base64Data = (await getBase64Async(file)).split(',')[1];
+                assertLocation();
+                const imageUrl = await saveBase64AsFile(base64Data, mediaFolder, fileNamePrefix, extension);
+                if (typeof imageUrl !== 'string' || !imageUrl.trim()) {
+                    throw new Error(t`The upload response did not include a file path.`);
                 }
                 /** @type {MediaAttachment} */
                 const mediaAttachment = {
@@ -226,34 +255,21 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
                     title: file.name,
                     source: MEDIA_SOURCE.UPLOAD,
                 };
-                message.extra.media.push(mediaAttachment);
-                message.extra.media_index = message.extra.media.length - 1;
-                message.extra.inline_image = true;
+                newMedia.push(mediaAttachment);
             } else {
                 const uniqueFileName = `${fileNamePrefix}.txt`;
-
+                let base64Data;
+                if (!isConvertible(file.type)) {
+                    base64Data = (await getBase64Async(file)).split(',')[1];
+                }
+                // A converter may be registered while the raw read is pending.
                 if (isConvertible(file.type)) {
-                    try {
-                        const converter = getConverter(file.type);
-                        const fileText = await converter(file);
-                        base64Data = convertTextToBase64(fileText);
-                    } catch (error) {
-                        toastr.error(String(error), t`Could not convert file`);
-                        console.error('Could not convert file', error);
-                    }
+                    base64Data = convertTextToBase64(await getConverter(file.type)(file));
                 }
 
+                assertLocation();
                 const fileUrl = await uploadFileAttachment(uniqueFileName, base64Data);
-
-                if (!fileUrl) {
-                    continue;
-                }
-
-                if (!Array.isArray(message.extra.files)) {
-                    message.extra.files = [];
-                }
-
-                message.extra.files.push({
+                newFiles.push({
                     url: fileUrl,
                     size: file.size,
                     name: file.name,
@@ -261,12 +277,40 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
                 });
             }
         }
+
+        assertLocation();
+        if (!message.extra || typeof message.extra !== 'object') message.extra = {};
+        if (newFiles.length) {
+            if (!Array.isArray(message.extra.files)) message.extra.files = [];
+            message.extra.files.push(...newFiles);
+        }
+        if (newMedia.length) {
+            if (!Array.isArray(message.extra.media)) message.extra.media = [];
+            message.extra.media.push(...newMedia);
+            message.extra.media_index = message.extra.media.length - 1;
+            message.extra.inline_image = true;
+        }
+        clearFileInputIfUnchanged(fileInput, files);
     } catch (error) {
-        console.error('Could not upload file', error);
-        toastr.error(t`Either the file is corrupted or its format is not supported.`, t`Could not upload the file`);
-    } finally {
-        $('#file_form').trigger('reset');
+        const paths = [...newFiles, ...newMedia].map(attachment => attachment.url).join(', ');
+        if (paths) {
+            throw new Error(t`${String(error)} Uploaded files are available at ${paths}.`, { cause: error });
+        }
+        throw error;
     }
+}
+
+/** Clear only the selection this operation owns, preserving another draft. */
+function clearFileInputIfUnchanged(fileInput, files) {
+    if (!isFileInputUnchanged(fileInput, files)) return;
+    fileInput.value = '';
+    if (fileInput.form) $(fileInput.form).trigger('reset');
+}
+
+/** Whether the input still contains this operation's exact selected files. */
+function isFileInputUnchanged(fileInput, files) {
+    return fileInput.files.length === files.length
+        && Array.from(fileInput.files).every((file, index) => file === files[index]);
 }
 
 /**
@@ -276,76 +320,57 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
  * @returns {Promise<string>} File URL
  */
 export async function uploadFileAttachment(fileName, base64Data) {
-    try {
-        const result = await fetch('/api/files/upload', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                name: fileName,
-                data: base64Data,
-            }),
-        });
+    const result = await fetch('/api/files/upload', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            name: fileName,
+            data: base64Data,
+        }),
+    });
+    await requireOkResponse(result, 'Upload file');
 
-        if (!result.ok) {
-            const error = await result.text();
-            throw new Error(error);
-        }
-
-        const responseData = await result.json();
-        return responseData.path;
-    } catch (error) {
-        toastr.error(String(error), t`Could not upload file`);
-        console.error('Could not upload file', error);
+    const responseData = await result.json();
+    if (typeof responseData?.path !== 'string' || !responseData.path.trim()) {
+        throw new Error(t`The upload response did not include a file path.`);
     }
+    return responseData.path;
 }
 
 /**
- * Downloads file from the server.
+ * Reads file text from the server. Failures reject; the caller owns presentation.
  * @param {string} url File URL
  * @returns {Promise<string>} File text
  */
 export async function getFileAttachment(url) {
-    try {
-        const result = await fetch(url, {
-            method: 'GET',
-            headers: getRequestHeaders(),
-        });
-
-        if (!result.ok) {
-            const error = await result.text();
-            throw new Error(error);
-        }
-
-        const text = await result.text();
-        return text;
-    } catch (error) {
-        toastr.error(error, t`Could not download file`);
-        console.error('Could not download file', error);
-    }
+    const result = await fetch(url, {
+        method: 'GET',
+        headers: getRequestHeaders(),
+    });
+    await requireOkResponse(result, 'Read file attachment');
+    return result.text();
 }
 
 /**
- * Validates file to make sure it is not binary or not image.
+ * Returns known file-policy rejections. Read failures reject for the caller to handle.
  * @param {File} file File object
- * @returns {Promise<boolean>} True if file is valid, false otherwise.
+ * @returns {Promise<Error|null>} Known rejection, or null when the file is allowed.
  */
-async function validateFile(file) {
-    const fileText = await file.text();
+async function getFileValidationError(file) {
     const isMedia = file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/');
-    const isBinary = /^[\x00-\x08\x0E-\x1F\x7F-\xFF]*$/.test(fileText);
 
     if (!isMedia && file.size > fileSizeLimit) {
-        toastr.error(t`File is too big. Maximum size is ${humanFileSize(fileSizeLimit)}.`);
-        return false;
+        return new Error(t`File is too big. Maximum size is ${humanFileSize(fileSizeLimit)}.`);
+    }
+    if (isMedia || isConvertible(file.type)) return null;
+
+    const fileText = await file.text();
+    const isBinary = /^[\x00-\x08\x0E-\x1F\x7F-\xFF]*$/.test(fileText);
+    if (isBinary && !isConvertible(file.type)) {
+        return new Error(t`Binary files are not supported. Select a text file or image.`);
     }
 
-    // If file is binary
-    if (isBinary && !isMedia && !isConvertible(file.type)) {
-        toastr.error(t`Binary files are not supported. Select a text file or image.`);
-        return false;
-    }
-
-    return true;
+    return null;
 }
 
 export function hasPendingFileAttachment() {
@@ -354,38 +379,66 @@ export function hasPendingFileAttachment() {
     return fileInput.files.length > 0;
 }
 
+/** Release the current subscription together with the selected File references it owns. */
+function disposeFileAttachmentChatListener() {
+    if (!fileAttachmentChatChangeListener) return;
+    eventSource.removeListener(event_types.CHAT_CHANGED, fileAttachmentChatChangeListener);
+    fileAttachmentChatChangeListener = undefined;
+}
+
 /**
  * Displays file information in the message sending form.
  * @param {FileList} fileList File object
  * @returns {Promise<void>}
  */
 async function onFileAttach(fileList) {
+    disposeFileAttachmentChatListener();
     if (!fileList || fileList.length === 0) return;
+    const fileInput = document.getElementById('file_form_input');
+    if (!(fileInput instanceof HTMLInputElement)) return;
+    const files = Array.from(fileList);
+    const currentChatId = getCurrentChatId();
+    const locationIdentity = getCurrentChatLocationIdentity();
+    const isCurrentSelection = () => isFileInputUnchanged(fileInput, files)
+        && (!currentChatId || locationIdentity === getCurrentChatLocationIdentity());
 
-    for (const file of fileList) {
-        const isValid = await validateFile(file);
-
-        // If file is binary
-        if (!isValid) {
-            toastr.warning(t`File ${file.name} is not supported.`);
-            $('#file_form').trigger('reset');
-            return;
-        }
-    }
-
-    const name = fileList.length === 1 ? fileList[0].name : t`${fileList.length} files selected`;
-    const size = [...fileList].reduce((acc, file) => acc + file.size, 0);
-    const title = [...fileList].map(x => x.name).join('\n');
+    const name = files.length === 1 ? files[0].name : t`${files.length} files selected`;
+    const size = files.reduce((acc, file) => acc + file.size, 0);
+    const title = files.map(file => file.name).join('\n');
     $('#file_form .file_name').text(name).attr('title', title);
     $('#file_form .file_size').text(humanFileSize(size)).attr('title', size);
     $('#file_form').removeClass('displayNone');
 
-    // Reset form on chat change (if not on a welcome screen)
-    const currentChatId = getCurrentChatId();
+    // Bind before validation IO. Welcome drafts can follow the first opened chat.
     if (currentChatId) {
-        eventSource.once(event_types.CHAT_CHANGED, () => {
-            $('#file_form').trigger('reset');
-        });
+        const resetOnChatChange = () => {
+            // emit() may already have queued a listener before replacement removed it.
+            if (fileAttachmentChatChangeListener !== resetOnChatChange) return;
+            if (!isFileInputUnchanged(fileInput, files)) {
+                disposeFileAttachmentChatListener();
+                return;
+            }
+            if (locationIdentity === getCurrentChatLocationIdentity()) return;
+            clearFileInputIfUnchanged(fileInput, files);
+            disposeFileAttachmentChatListener();
+        };
+        fileAttachmentChatChangeListener = resetOnChatChange;
+        eventSource.on(event_types.CHAT_CHANGED, resetOnChatChange);
+    }
+
+    try {
+        for (const file of files) {
+            const validationError = await getFileValidationError(file);
+            if (!isCurrentSelection()) return;
+            if (validationError) {
+                toastr.error(validationError.message);
+                toastr.warning(t`File ${file.name} is not supported.`);
+                clearFileInputIfUnchanged(fileInput, files);
+                return;
+            }
+        }
+    } catch (error) {
+        if (isCurrentSelection()) onFileAttachmentError(error);
     }
 }
 
@@ -401,13 +454,6 @@ async function deleteMessageFile(messageBlock, messageId, fileIndex) {
         return;
     }
 
-    const confirm = await callGenericPopup('Are you sure you want to delete this file?', POPUP_TYPE.CONFIRM);
-
-    if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
-        console.debug('Delete file cancelled');
-        return;
-    }
-
     const message = chat[messageId];
 
     if (!Array.isArray(message?.extra?.files)) {
@@ -420,12 +466,30 @@ async function deleteMessageFile(messageBlock, messageId, fileIndex) {
         return;
     }
 
-    const url = message.extra.files[fileIndex]?.url;
+    const attachment = message.extra.files[fileIndex];
+    const sourceIdentity = getAttachmentSourceIdentity(ATTACHMENT_SOURCE.CHAT);
+    const isCurrentLocation = () => sourceIdentity === getAttachmentSourceIdentity(ATTACHMENT_SOURCE.CHAT)
+        && chat[messageId] === message && message.extra?.files?.[fileIndex] === attachment;
+    const confirm = await callGenericPopup('Are you sure you want to delete this file?', POPUP_TYPE.CONFIRM);
+
+    if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+        console.debug('Delete file cancelled');
+        return;
+    }
+    if (!isCurrentLocation()) {
+        onFileAttachmentError(new Error(t`The attachment location changed. Please retry from its current location.`));
+        return;
+    }
+    if (!await deleteFileFromServer(attachment.url)) {
+        return;
+    }
+    if (!isCurrentLocation()) {
+        onFileAttachmentError(new Error(t`File ${attachment.url} was deleted, but the attachment location changed. Reopen its location to refresh the references.`));
+        return;
+    }
+
     message.extra.files.splice(fileIndex, 1);
-
     await saveChatConditional();
-    await deleteFileFromServer(url);
-
     appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
 }
 
@@ -465,10 +529,9 @@ async function viewMessageFile(messageId, fileIndex) {
 /**
  * Inserts a file embed into the message.
  * @param {number} messageId
- * @param {JQuery<HTMLElement>} messageBlock
  * @returns {Promise<void>}
  */
-function embedMessageFile(messageId, messageBlock) {
+function embedMessageFile(messageId) {
     const message = chat[messageId];
 
     if (!message) {
@@ -476,6 +539,14 @@ function embedMessageFile(messageId, messageBlock) {
         return;
     }
 
+    const locationIdentity = getCurrentChatLocationIdentity();
+    const swipeId = message.swipe_id;
+    const assertTarget = () => {
+        if (locationIdentity !== getCurrentChatLocationIdentity()
+            || !chat.includes(message) || message.swipe_id !== swipeId) {
+            throw new Error(t`The attachment location changed. Please retry from its current location.`);
+        }
+    };
     $('#embed_file_input')
         .off('change')
         .on('change', parseAndUploadEmbed)
@@ -485,19 +556,37 @@ function embedMessageFile(messageId, messageBlock) {
         if (!(e.target instanceof HTMLInputElement)) return;
         if (!e.target.files.length) return;
 
-        for (const file of e.target.files) {
-            const isValid = await validateFile(file);
-
-            if (!isValid) {
-                toastr.warning(t`File ${file.name} is not supported.`);
-                $('#file_form').trigger('reset');
-                return;
+        const files = Array.from(e.target.files);
+        const assertSelection = () => {
+            assertTarget();
+            if (!isFileInputUnchanged(e.target, files)) {
+                throw new Error(t`The file selection changed. Please retry with the current selection.`);
             }
+        };
+        try {
+            assertSelection();
+            for (const file of files) {
+                const validationError = await getFileValidationError(file).catch(error => {
+                    assertSelection();
+                    throw error;
+                });
+                assertSelection();
+                if (validationError) {
+                    toastr.error(validationError.message);
+                    toastr.warning(t`File ${file.name} is not supported.`);
+                    clearFileInputIfUnchanged(e.target, files);
+                    return;
+                }
+            }
+            await populateFileAttachment(message, 'embed_file_input', locationIdentity, files);
+        } catch (error) {
+            onFileAttachmentError(error);
+            return;
         }
 
-        await populateFileAttachment(message, 'embed_file_input');
-        await eventSource.emit(event_types.MESSAGE_FILE_EMBEDDED, messageId);
-        appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
+        const currentMessageId = chat.indexOf(message);
+        await eventSource.emit(event_types.MESSAGE_FILE_EMBEDDED, currentMessageId);
+        appendMediaToMessage(message, $(`.mes[mesid="${currentMessageId}"]`), SCROLL_BEHAVIOR.KEEP);
         await saveChatConditional();
     }
 }
@@ -512,9 +601,6 @@ export async function appendFileContent(message, messageText) {
     if (!message || !message.extra || typeof message.extra !== 'object') {
         return messageText;
     }
-    if (message.extra.fileLength >= 0) {
-        delete message.extra.fileLength;
-    }
     if (Array.isArray(message.extra?.files) && message.extra.files.length > 0) {
         const fileTexts = [];
         for (const file of message.extra.files) {
@@ -526,6 +612,9 @@ export async function appendFileContent(message, messageText) {
         const mergedFileTexts = fileTexts.join('\n\n') + '\n\n';
         message.extra.fileLength = mergedFileTexts.length;
         return mergedFileTexts + messageText;
+    }
+    if (message.extra.fileLength >= 0) {
+        delete message.extra.fileLength;
     }
     return messageText;
 }
@@ -1133,27 +1222,33 @@ export async function deleteMediaFromServer(url, silent = false) {
  */
 export async function deleteFileFromServer(url, silent = false) {
     try {
-        const result = await fetch('/api/files/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ path: url }),
-        });
-
-        if (!result.ok) {
-            if (!silent) {
-                const error = await result.text();
-                throw new Error(error);
-            }
-            return false;
-        }
-
-        await eventSource.emit(event_types.FILE_ATTACHMENT_DELETED, url);
+        await deleteFileAttachmentFromServer(url);
         return true;
     } catch (error) {
-        toastr.error(String(error), t`Could not delete file`);
+        if (!silent) toastr.error(String(error), t`Could not delete file`);
         console.error('Could not delete file', error);
         return false;
     }
+}
+
+/** Deletes one uploaded file; callers own how a rejected operation is presented. */
+async function deleteFileAttachmentFromServer(url) {
+    const result = await fetch('/api/files/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ path: url }),
+    });
+    await requireOkResponse(result, 'Delete file');
+    await eventSource.emit(event_types.FILE_ATTACHMENT_DELETED, url);
+}
+
+/**
+ * Presents attachment failures owned by the actual file or composer control.
+ * @param {unknown} error
+ */
+export function onFileAttachmentError(error) {
+    console.error('Could not complete the attachment operation', error);
+    toastr.error(String(error), t`Could not complete the attachment operation`);
 }
 
 /**
@@ -1178,6 +1273,10 @@ async function openFilePopup(attachment) {
  * @param {function} callback Callback function
  */
 async function editAttachment(attachment, source, callback) {
+    const sourceIdentity = getAttachmentSourceIdentity(source);
+    if (sourceIdentity === undefined) {
+        throw new Error(t`Choose a character first.`);
+    }
     const originalFileText = attachment.text || (await getFileAttachment(attachment.url));
     const template = $(await renderExtensionTemplateAsync('attachments', 'notepad'));
 
@@ -1201,12 +1300,8 @@ async function editAttachment(attachment, source, callback) {
         return;
     }
 
-    const nullCallback = () => { };
-    await deleteAttachment(attachment, source, nullCallback, false);
     const file = new File([editedFileText], editedFileName, { type: 'text/plain' });
-    await uploadFileAttachmentToServer(file, source);
-
-    callback();
+    await replaceAttachment(attachment, source, file, source, callback, { sourceIdentity, targetIdentity: sourceIdentity });
 }
 
 /**
@@ -1229,10 +1324,12 @@ async function downloadAttachment(attachment) {
  * @param {FileAttachment} attachment Attachment to enable
  * @param {function} callback Success callback
  */
-function enableAttachment(attachment, callback) {
+export function enableAttachment(attachment, callback) {
     ensureAttachmentsExist();
-    extension_settings.disabled_attachments = extension_settings.disabled_attachments.filter(url => url !== attachment.url);
-    saveSettingsDebounced();
+    if (extension_settings.disabled_attachments.includes(attachment.url)) {
+        extension_settings.disabled_attachments = extension_settings.disabled_attachments.filter(url => url !== attachment.url);
+        saveSettingsDebounced();
+    }
     callback();
 }
 
@@ -1241,10 +1338,12 @@ function enableAttachment(attachment, callback) {
  * @param {FileAttachment} attachment Attachment to disable
  * @param {function} callback Success callback
  */
-function disableAttachment(attachment, callback) {
+export function disableAttachment(attachment, callback) {
     ensureAttachmentsExist();
-    extension_settings.disabled_attachments.push(attachment.url);
-    saveSettingsDebounced();
+    if (!extension_settings.disabled_attachments.includes(attachment.url)) {
+        extension_settings.disabled_attachments.push(attachment.url);
+        saveSettingsDebounced();
+    }
     callback();
 }
 
@@ -1256,6 +1355,10 @@ function disableAttachment(attachment, callback) {
  * @returns {Promise<void>} A promise that resolves when the attachment is moved.
  */
 async function moveAttachment(attachment, source, callback) {
+    const sourceIdentity = getAttachmentSourceIdentity(source);
+    if (sourceIdentity === undefined) {
+        throw new Error(t`Choose a character first.`);
+    }
     let selectedTarget = source;
     const targets = getAvailableTargets();
     const template = $(await renderExtensionTemplateAsync('attachments', 'move-attachment', { name: attachment.name, targets }));
@@ -1275,11 +1378,92 @@ async function moveAttachment(attachment, source, callback) {
         return;
     }
 
+    const targetIdentity = getAttachmentSourceIdentity(selectedTarget);
+    if (targetIdentity === undefined) {
+        throw new Error(t`Choose a character first.`);
+    }
     const content = await getFileAttachment(attachment.url);
     const file = new File([content], attachment.name, { type: 'text/plain' });
-    await deleteAttachment(attachment, source, () => { }, false);
-    await uploadFileAttachmentToServer(file, selectedTarget);
-    callback();
+    await replaceAttachment(attachment, source, file, selectedTarget, callback, { sourceIdentity, targetIdentity });
+}
+
+/**
+ * Identifies the owner of a Data Bank source using its existing location facts.
+ * @param {string} source
+ * @returns {string | undefined} No identity when character attachments have no selected character
+ */
+function getAttachmentSourceIdentity(source) {
+    switch (source) {
+        case ATTACHMENT_SOURCE.GLOBAL:
+            return source;
+        case ATTACHMENT_SOURCE.CHARACTER:
+            return characters[this_chid]?.avatar || undefined;
+        case ATTACHMENT_SOURCE.CHAT:
+            return getCurrentChatLocationIdentity();
+        default:
+            throw new Error(`Unsupported attachment source: ${source}`);
+    }
+}
+
+/**
+ * Confirms the replacement reference before retiring the original attachment.
+ * @param {FileAttachment} attachment Original attachment
+ * @param {string} source Original attachment source
+ * @param {File} file Replacement file
+ * @param {string} target Replacement attachment source
+ * @param {function} callback Success callback
+ * @param {{ sourceIdentity?: string, targetIdentity?: string }} [location] Locations captured before the caller's IO
+ * @returns {Promise<string | undefined>} Confirmed replacement path, or no path after upload/save failure
+ */
+export async function replaceAttachment(attachment, source, file, target, callback, {
+    sourceIdentity = getAttachmentSourceIdentity(source),
+    targetIdentity = getAttachmentSourceIdentity(target),
+} = {}) {
+    if (sourceIdentity === undefined || targetIdentity === undefined) {
+        throw new Error(t`Choose a character first.`);
+    }
+
+    const assertLocation = (fileUrl) => {
+        if (sourceIdentity !== getAttachmentSourceIdentity(source)
+            || targetIdentity !== getAttachmentSourceIdentity(target)
+            || !getDataBankAttachmentsForSource(source, true).some(file => file.url === attachment.url)) {
+            throw new Error(fileUrl
+                ? t`The attachment location changed. The uploaded file is available at ${fileUrl}. Please retry from its current location.`
+                : t`The attachment location changed. Please retry from its current location.`);
+        }
+    };
+    assertLocation();
+
+    const fileUrl = await uploadFileAttachmentToServer(file, target, targetIdentity);
+    if (!fileUrl) {
+        return;
+    }
+    assertLocation(fileUrl);
+
+    switch (target) {
+        case ATTACHMENT_SOURCE.GLOBAL:
+        case ATTACHMENT_SOURCE.CHARACTER:
+            if (await flushPendingSettingsSave(true) !== true) {
+                return;
+            }
+            break;
+        case ATTACHMENT_SOURCE.CHAT:
+            cancelDebouncedMetadataSave();
+            try {
+                // Neutral chats retain saveMetadata's existing session-only no-op.
+                await saveMetadata();
+            } catch {
+                // The original chat writer owns save failures and integrity consent.
+                return;
+            }
+            break;
+        default:
+            throw new Error(`Unsupported attachment source: ${target}`);
+    }
+
+    assertLocation(fileUrl);
+    await deleteAttachment(attachment, source, callback, false);
+    return fileUrl;
 }
 
 /**
@@ -1288,9 +1472,22 @@ async function moveAttachment(attachment, source, callback) {
  * @param {string} source Source of the attachment
  * @param {function} callback Callback function
  * @param {boolean} [confirm=true] If true, show a confirmation dialog
+ * @param {string} [sourceIdentity] Location captured before the caller's confirmation or IO
  * @returns {Promise<void>} A promise that resolves when the attachment is deleted.
  */
-export async function deleteAttachment(attachment, source, callback, confirm = true) {
+export async function deleteAttachment(attachment, source, callback, confirm = true, sourceIdentity = getAttachmentSourceIdentity(source)) {
+    if (sourceIdentity === undefined) {
+        throw new Error(t`Choose a character first.`);
+    }
+    const assertLocation = (deleted = false) => {
+        if (sourceIdentity !== getAttachmentSourceIdentity(source)
+            || !getDataBankAttachmentsForSource(source, true).some(file => file.url === attachment.url)) {
+            throw new Error(deleted
+                ? t`File ${attachment.url} was deleted, but the attachment location changed. Reopen its location to refresh the references.`
+                : t`The attachment location changed. Please retry from its current location.`);
+        }
+    };
+    assertLocation();
     if (confirm) {
         const result = await callGenericPopup('Are you sure you want to delete this attachment?', POPUP_TYPE.CONFIRM);
 
@@ -1298,31 +1495,40 @@ export async function deleteAttachment(attachment, source, callback, confirm = t
             return;
         }
     }
+    assertLocation();
+    await deleteFileAttachmentFromServer(attachment.url);
+    assertLocation(true);
+    removeAttachmentReference(attachment, source);
+    await callback();
+}
 
+/** Removes a confirmed deleted/missing file reference and schedules its existing owner writer. */
+function removeAttachmentReference(attachment, source) {
     ensureAttachmentsExist();
 
     switch (source) {
-        case 'global':
+        case ATTACHMENT_SOURCE.GLOBAL:
             extension_settings.attachments = extension_settings.attachments.filter((a) => a.url !== attachment.url);
-            saveSettingsDebounced();
             break;
-        case 'chat':
+        case ATTACHMENT_SOURCE.CHAT:
             chat_metadata.attachments = chat_metadata.attachments.filter((a) => a.url !== attachment.url);
-            saveMetadataDebounced();
             break;
-        case 'character':
-            extension_settings.character_attachments[characters[this_chid]?.avatar] = extension_settings.character_attachments[characters[this_chid]?.avatar].filter((a) => a.url !== attachment.url);
+        case ATTACHMENT_SOURCE.CHARACTER: {
+            const avatar = characters[this_chid].avatar;
+            extension_settings.character_attachments[avatar] = extension_settings.character_attachments[avatar].filter((a) => a.url !== attachment.url);
             break;
+        }
+        default:
+            throw new Error(`Unsupported attachment source: ${source}`);
     }
 
-    if (Array.isArray(extension_settings.disabled_attachments) && extension_settings.disabled_attachments.includes(attachment.url)) {
+    if (extension_settings.disabled_attachments.includes(attachment.url)) {
         extension_settings.disabled_attachments = extension_settings.disabled_attachments.filter(url => url !== attachment.url);
-        saveSettingsDebounced();
+        if (source === ATTACHMENT_SOURCE.CHAT) saveSettingsDebounced();
     }
 
-    const silent = confirm === false;
-    await deleteFileFromServer(attachment.url, silent);
-    callback();
+    if (source === ATTACHMENT_SOURCE.CHAT) saveMetadataDebounced();
+    else saveSettingsDebounced();
 }
 
 /**
@@ -1398,11 +1604,11 @@ async function openAttachmentManager() {
             attachmentTemplate.find('.attachmentListItemName').text(attachment.name);
             attachmentTemplate.find('.attachmentListItemSize').text(humanFileSize(attachment.size));
             attachmentTemplate.find('.attachmentListItemCreated').text(new Date(attachment.created).toLocaleString());
-            attachmentTemplate.find('.viewAttachmentButton').on('click', () => openFilePopup(attachment));
-            attachmentTemplate.find('.editAttachmentButton').on('click', () => editAttachment(attachment, source, renderAttachments));
-            attachmentTemplate.find('.deleteAttachmentButton').on('click', () => deleteAttachment(attachment, source, renderAttachments));
-            attachmentTemplate.find('.downloadAttachmentButton').on('click', () => downloadAttachment(attachment));
-            attachmentTemplate.find('.moveAttachmentButton').on('click', () => moveAttachment(attachment, source, renderAttachments));
+            attachmentTemplate.find('.viewAttachmentButton').on('click', () => openFilePopup(attachment).catch(onFileAttachmentError));
+            attachmentTemplate.find('.editAttachmentButton').on('click', () => editAttachment(attachment, source, renderAttachments).catch(onFileAttachmentError));
+            attachmentTemplate.find('.deleteAttachmentButton').on('click', () => deleteAttachment(attachment, source, renderAttachments).catch(onFileAttachmentError));
+            attachmentTemplate.find('.downloadAttachmentButton').on('click', () => downloadAttachment(attachment).catch(onFileAttachmentError));
+            attachmentTemplate.find('.moveAttachmentButton').on('click', () => moveAttachment(attachment, source, renderAttachments).catch(onFileAttachmentError));
             attachmentTemplate.find('.enableAttachmentButton').toggle(isDisabled).on('click', () => enableAttachment(attachment, renderAttachments));
             attachmentTemplate.find('.disableAttachmentButton').toggle(!isDisabled).on('click', () => disableAttachment(attachment, renderAttachments));
             template.find(sources[source]).append(attachmentTemplate);
@@ -1444,7 +1650,7 @@ async function openAttachmentManager() {
             buttonTemplate.attr('title', scraper.description);
             buttonTemplate.on('click', () => {
                 const target = modal.attr('data-attachment-manager-target');
-                runScraper(scraper.id, target, renderAttachments);
+                return runScraper(scraper.id, target, renderAttachments);
             });
             modal.append(buttonTemplate);
         }
@@ -1514,22 +1720,31 @@ async function openAttachmentManager() {
     }
 
     const dragDropHandler = new DragAndDropHandler('.popup', async (files, event) => {
-        let selectedTarget = ATTACHMENT_SOURCE.GLOBAL;
-        const targets = getAvailableTargets();
+        try {
+            let selectedTarget = ATTACHMENT_SOURCE.GLOBAL;
+            const targets = getAvailableTargets();
 
-        const targetSelectTemplate = $(await renderExtensionTemplateAsync('attachments', 'files-dropped', { count: files.length, targets: targets }));
-        targetSelectTemplate.find('.droppedFilesTarget').on('input', function () {
-            selectedTarget = String($(this).val());
-        });
-        const result = await callGenericPopup(targetSelectTemplate, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: 'Upload', cancelButton: 'Cancel' });
-        if (result !== POPUP_RESULT.AFFIRMATIVE) {
-            console.log('File upload cancelled');
-            return;
+            const targetSelectTemplate = $(await renderExtensionTemplateAsync('attachments', 'files-dropped', { count: files.length, targets: targets }));
+            targetSelectTemplate.find('.droppedFilesTarget').on('input', function () {
+                selectedTarget = String($(this).val());
+            });
+            const result = await callGenericPopup(targetSelectTemplate, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: 'Upload', cancelButton: 'Cancel' });
+            if (result !== POPUP_RESULT.AFFIRMATIVE) {
+                console.log('File upload cancelled');
+                return;
+            }
+            const targetIdentity = getAttachmentSourceIdentity(selectedTarget);
+            if (targetIdentity === undefined) {
+                throw new Error(t`Choose a character first.`);
+            }
+            for (const file of files) {
+                if (!await uploadFileAttachmentToServer(file, selectedTarget, targetIdentity)) return;
+            }
+        } catch (error) {
+            onFileAttachmentError(error);
+        } finally {
+            await renderAttachments().catch(onFileAttachmentError);
         }
-        for (const file of files) {
-            await uploadFileAttachmentToServer(file, selectedTarget);
-        }
-        renderAttachments();
     });
 
     let sortField = accountStorage.getItem('DataBank_sortField') || 'created';
@@ -1555,42 +1770,45 @@ async function openAttachmentManager() {
     });
     function handleBulkAction(action) {
         return async () => {
-            const selectedAttachments = document.querySelectorAll('.attachmentListItemCheckboxContainer .attachmentListItemCheckbox:checked');
+            try {
+                const selectedAttachments = document.querySelectorAll('.attachmentListItemCheckboxContainer .attachmentListItemCheckbox:checked');
 
-            if (selectedAttachments.length === 0) {
-                toastr.info(t`No attachments selected.`, t`Data Bank`);
-                return;
+                if (selectedAttachments.length === 0) {
+                    toastr.info(t`No attachments selected.`, t`Data Bank`);
+                    return;
+                }
+
+                // Bind each selected source before the confirmation and deletion waits.
+                const selectedOperations = [...selectedAttachments].map(checkbox => {
+                    const listItem = checkbox.closest('.attachmentListItem');
+                    if (!(listItem instanceof HTMLElement)) return;
+                    const url = listItem.dataset.attachmentUrl;
+                    const source = listItem.dataset.attachmentSource;
+                    const attachment = getDataBankAttachmentsForSource(source, true).find(file => file.url === url);
+                    if (attachment) return { attachment, source, sourceIdentity: getAttachmentSourceIdentity(source) };
+                }).filter(Boolean);
+
+                if (action.confirmMessage) {
+                    const confirm = await callGenericPopup(action.confirmMessage, POPUP_TYPE.CONFIRM);
+                    if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+                        return;
+                    }
+                }
+
+                for (const { attachment, source, sourceIdentity } of selectedOperations) {
+                    await action.perform(attachment, source, sourceIdentity);
+                }
+
+                document.querySelectorAll('.attachmentListItemCheckbox, .attachmentsBulkEditCheckbox').forEach(checkbox => {
+                    if (checkbox instanceof HTMLInputElement) {
+                        checkbox.checked = false;
+                    }
+                });
+            } catch (error) {
+                onFileAttachmentError(error);
             }
 
-            if (action.confirmMessage) {
-                const confirm = await callGenericPopup(action.confirmMessage, POPUP_TYPE.CONFIRM);
-                if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
-                    return;
-                }
-            }
-
-            const includeDisabled = true;
-            const attachments = getDataBankAttachments(includeDisabled);
-            selectedAttachments.forEach(async (checkbox) => {
-                const listItem = checkbox.closest('.attachmentListItem');
-                if (!(listItem instanceof HTMLElement)) {
-                    return;
-                }
-                const url = listItem.dataset.attachmentUrl;
-                const source = listItem.dataset.attachmentSource;
-                const attachment = attachments.find(a => a.url === url);
-                if (!attachment) {
-                    return;
-                }
-                await action.perform(attachment, source);
-            });
-
-            document.querySelectorAll('.attachmentListItemCheckbox, .attachmentsBulkEditCheckbox').forEach(checkbox => {
-                if (checkbox instanceof HTMLInputElement) {
-                    checkbox.checked = false;
-                }
-            });
-
+            // Rendering preserves the remaining checked URLs, including after partial success.
             await renderAttachments();
         };
     }
@@ -1605,7 +1823,7 @@ async function openAttachmentManager() {
 
     template.find('.bulkActionDelete').on('click', handleBulkAction({
         confirmMessage: 'Are you sure you want to delete the selected attachments?',
-        perform: async (attachment, source) => await deleteAttachment(attachment, source, () => { }, false),
+        perform: (attachment, source, sourceIdentity) => deleteAttachment(attachment, source, () => { }, false, sourceIdentity),
     }));
 
     template.find('.bulkActionSelectAll').on('click', () => {
@@ -1662,6 +1880,10 @@ function getAvailableTargets() {
  */
 async function runScraper(scraperId, target, callback) {
     try {
+        const targetIdentity = getAttachmentSourceIdentity(target);
+        if (targetIdentity === undefined) {
+            throw new Error(t`Choose a character first.`);
+        }
         console.log(`Running scraper ${scraperId} for ${target}`);
         const files = await ScraperManager.runDataBankScraper(scraperId);
 
@@ -1677,15 +1899,16 @@ async function runScraper(scraperId, target, callback) {
         }
 
         for (const file of files) {
-            await uploadFileAttachmentToServer(file, target);
+            if (!await uploadFileAttachmentToServer(file, target, targetIdentity)) return;
         }
 
         toastr.success(t`Scraped ${files.length} files from ${scraperId} to ${target}.`, t`Data Bank`);
-        callback();
     }
     catch (error) {
         console.error('Scraping failed', error);
-        toastr.error(t`Check browser console for details.`, t`Scraping failed`);
+        toastr.error(String(error), t`Scraping failed`);
+    } finally {
+        await callback().catch(onFileAttachmentError);
     }
 }
 
@@ -1693,38 +1916,42 @@ async function runScraper(scraperId, target, callback) {
  * Uploads a file attachment to the server.
  * @param {File} file File to upload
  * @param {string} target Target for the attachment
- * @returns {Promise<string>} Path to the uploaded file
+ * @param {string} [targetIdentity] Target captured before the caller's IO
+ * @returns {Promise<string | undefined>} Confirmed path, or no path after validation rejects the file
  */
-export async function uploadFileAttachmentToServer(file, target) {
-    const isValid = await validateFile(file);
+export async function uploadFileAttachmentToServer(file, target, targetIdentity = getAttachmentSourceIdentity(target)) {
+    if (targetIdentity === undefined) {
+        throw new Error(t`Choose a character first.`);
+    }
+    if (targetIdentity !== getAttachmentSourceIdentity(target)) {
+        throw new Error(t`The attachment location changed. Please retry from its current location.`);
+    }
+    const validationError = await getFileValidationError(file);
+    if (targetIdentity !== getAttachmentSourceIdentity(target)) {
+        throw new Error(t`The attachment location changed. Please retry from its current location.`);
+    }
 
-    if (!isValid) {
+    if (validationError) {
+        toastr.error(validationError.message);
         return;
     }
 
-    let base64Data = await getBase64Async(file);
     const slug = getStringHash(file.name);
     const uniqueFileName = `${Date.now()}_${slug}.txt`;
+    const fileText = isConvertible(file.type)
+        ? await getConverter(file.type)(file)
+        : await file.text();
+    const base64Data = convertTextToBase64(fileText);
 
-    if (isConvertible(file.type)) {
-        try {
-            const converter = getConverter(file.type);
-            const fileText = await converter(file);
-            base64Data = convertTextToBase64(fileText);
-        } catch (error) {
-            toastr.error(String(error), t`Could not convert file`);
-            console.error('Could not convert file', error);
-        }
-    } else {
-        const fileText = await file.text();
-        base64Data = convertTextToBase64(fileText);
+    if (targetIdentity !== getAttachmentSourceIdentity(target)) {
+        throw new Error(t`The attachment location changed. Please retry from its current location.`);
     }
 
     const fileUrl = await uploadFileAttachment(uniqueFileName, base64Data);
     const convertedSize = Math.round(base64Data.length * 0.75);
 
-    if (!fileUrl) {
-        return;
+    if (targetIdentity !== getAttachmentSourceIdentity(target)) {
+        throw new Error(t`The attachment location changed. The uploaded file is available at ${fileUrl}. Please retry from its current location.`);
     }
 
     const attachment = {
@@ -1834,6 +2061,7 @@ async function verifyAttachments() {
  */
 async function verifyAttachmentsForSource(source) {
     try {
+        const sourceIdentity = getAttachmentSourceIdentity(source);
         const attachments = getDataBankAttachmentsForSource(source);
         const urls = attachments.map(a => a.url);
         const response = await fetch('/api/files/verify', {
@@ -1848,10 +2076,13 @@ async function verifyAttachmentsForSource(source) {
         }
 
         const verifiedUrls = await response.json();
+        if (sourceIdentity !== getAttachmentSourceIdentity(source)) {
+            throw new Error(t`The attachment location changed. Please retry from its current location.`);
+        }
         for (const attachment of attachments) {
             if (verifiedUrls[attachment.url] === false) {
-                console.log('Deleting orphaned attachment', attachment);
-                await deleteAttachment(attachment, source, () => { }, false);
+                console.log('Removing orphaned attachment reference', attachment);
+                removeAttachmentReference(attachment, source);
             }
         }
     } catch (error) {
@@ -2139,7 +2370,7 @@ export function initChatUtilities() {
         const messageId = Number(messageBlock.attr('mesid'));
         const fileBlock = $(this).closest('.mes_file_container');
         const fileIndex = Number(fileBlock.attr('data-index'));
-        await viewMessageFile(messageId, fileIndex);
+        await viewMessageFile(messageId, fileIndex).catch(onFileAttachmentError);
     });
 
     $(document).on('click', '.assistant_note_export', async function (_e) {
@@ -2221,7 +2452,7 @@ export function initChatUtilities() {
     $(document).on('click', '.mes_embed', function () {
         const messageBlock = $(this).closest('.mes');
         const messageId = Number(messageBlock.attr('mesid'));
-        embedMessageFile(messageId, messageBlock);
+        embedMessageFile(messageId);
     });
 
     $(document).on('click', '.editor_maximize', async function (e) {
@@ -2270,6 +2501,7 @@ export function initChatUtilities() {
 
         if (withTab) {
             textarea.addEventListener('keydown', (evt) => {
+                if (isComposingKeyboardEvent(evt)) return;
                 if (evt.key == 'Tab' && !evt.shiftKey && !evt.ctrlKey && !evt.altKey) {
                     evt.preventDefault();
                     const start = textarea.selectionStart;
@@ -2385,7 +2617,13 @@ export function initChatUtilities() {
     });
 
     $('#file_form').on('reset', function () {
-        $('#file_form').addClass('displayNone');
+        // reset fires before its default action; a cancelled reset still owns its files.
+        queueMicrotask(() => {
+            if (!hasPendingFileAttachment()) {
+                $('#file_form').addClass('displayNone');
+                disposeFileAttachmentChatListener();
+            }
+        });
     });
 
     document.getElementById('send_textarea').addEventListener('paste', async function (event) {

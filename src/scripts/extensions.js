@@ -11,6 +11,7 @@ import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { stripCommandErrorPrefixes } from './util/command-error-utils.js';
 import { toUserFacingErrorText } from './util/user-facing-error.js';
+import { requireOkResponse } from './util/command-error-utils.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
 import { initPopupMenu } from './popup-menu.js';
 import { createThirdPartyStylesheetResolver } from './extensions/runtime/third-party-runtime.js';
@@ -74,6 +75,8 @@ let manifests = {};
 let offlineExtensionsDiscoveryPromise = null;
 let offlineExtensionsPreparationPromise = null;
 let offlineExtensionsDiscoveryGeneration = 0;
+/** @type {Promise<void> | null} */
+let startupExtensionsPromise = null;
 
 /**
  * Default URL for the Extras API.
@@ -991,7 +994,7 @@ function notifyUpdatesInputHandler() {
  * @param {string} baseUrl Extras API base URL
  * @returns {Promise<void>}
  */
-async function connectToApi(baseUrl, { parallelism = 1, includeExtension = () => true, resetErrors = true } = {}) {
+async function connectToApi(baseUrl, { parallelism = 1, includeExtension = () => true, resetErrors = true, throwOnError = false } = {}) {
     if (!baseUrl) {
         return;
     }
@@ -999,20 +1002,24 @@ async function connectToApi(baseUrl, { parallelism = 1, includeExtension = () =>
     const url = new URL(baseUrl);
     url.pathname = '/api/modules';
 
+    let getExtensionsResult;
+    let data;
     try {
-        const getExtensionsResult = await doExtrasFetch(url);
-
-        if (getExtensionsResult.ok) {
-            const data = await getExtensionsResult.json();
-            modules = data.modules;
-            await activateExtensions({ parallelism, includeExtension, resetErrors });
-            await eventSource.emit(event_types.EXTRAS_CONNECTED, modules);
+        getExtensionsResult = await doExtrasFetch(url);
+        if (!getExtensionsResult.ok) {
+            updateStatus(false);
+            return;
         }
-
-        updateStatus(getExtensionsResult.ok);
+        data = await getExtensionsResult.json();
     } catch {
         updateStatus(false);
+        return;
     }
+
+    modules = data.modules;
+    await activateExtensions({ parallelism, includeExtension, resetErrors, throwOnError });
+    await eventSource.emit(event_types.EXTRAS_CONNECTED, modules);
+    updateStatus(true);
 }
 
 /**
@@ -1602,7 +1609,12 @@ async function onDeleteClick() {
     const confirmation = await popup.show();
     if (confirmation === POPUP_RESULT.AFFIRMATIVE) {
         const shouldClean = hasCleanHook && Boolean(popup.inputResults?.get('extension_delete_cleanup'));
-        await deleteExtension(extensionName, shouldClean);
+        try {
+            await deleteExtension(extensionName, shouldClean);
+        } catch (error) {
+            console.error('Extension deletion failed:', error);
+            toastr.error(toUserFacingErrorText(error), t`Could not delete extension`);
+        }
     }
 }
 
@@ -1747,18 +1759,15 @@ export async function deleteExtension(extensionName, shouldClean = false) {
 
     await callExtensionHook(fullExtensionName, 'delete');
 
-    try {
-        await fetch('/api/extensions/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                extensionName,
-                global: getExtensionType(extensionName) === 'global',
-            }),
-        });
-    } catch (error) {
-        console.error('Error:', error);
-    }
+    const response = await fetch('/api/extensions/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            extensionName,
+            global: getExtensionType(extensionName) === 'global',
+        }),
+    });
+    await requireOkResponse(response, 'Delete extension');
 
     // Delete or clean might have updated settings, which could race with the page reload, so we'll force save here
     await saveSettings();
@@ -2016,7 +2025,7 @@ export async function activateStartupSystemExtensions({
     return hasPendingDeferredThirdPartyActivation();
 }
 
-export async function activateDeferredThirdPartyExtensions({ parallelism = 1 } = {}) {
+export async function activateDeferredThirdPartyExtensions({ parallelism = 1, throwOnError = false } = {}) {
     await prepareOfflineExtensionsActivation();
 
     if (!hasPendingDeferredThirdPartyActivation()) {
@@ -2028,6 +2037,7 @@ export async function activateDeferredThirdPartyExtensions({ parallelism = 1 } =
             parallelism,
             includeExtension: (name) => isDeferredThirdPartyExtension(name),
             resetErrors: false,
+            throwOnError,
         });
 
         if (connectedToApi) {
@@ -2043,7 +2053,28 @@ export async function activateDeferredThirdPartyExtensions({ parallelism = 1 } =
         parallelism,
         includeExtension: (name) => isDeferredThirdPartyExtension(name),
         resetErrors: false,
+        throwOnError,
     });
+}
+
+/**
+ * Publish the deferred startup task before yielding to the first post-ready paint.
+ * APP_READY must have finished: its awaited Quick Reply hooks can open chats or
+ * generate, and cannot wait for a task that depends on their own completion.
+ * @param {Promise<unknown>} afterPaint
+ * @returns {Promise<void>}
+ */
+export function startDeferredThirdPartyExtensions(afterPaint) {
+    startupExtensionsPromise ??= (async () => {
+        await afterPaint;
+        await activateDeferredThirdPartyExtensions({ parallelism: 1, throwOnError: true });
+    })();
+    return startupExtensionsPromise;
+}
+
+/** Chat and generation share the actual startup task, including its failure. */
+export function waitForStartupExtensions() {
+    return startupExtensionsPromise ?? Promise.resolve();
 }
 
 export async function activateOfflineExtensions({ versionChanged, enableAutoUpdate, parallelism = 1, forceRefresh = false } = {}) {
@@ -2341,28 +2372,6 @@ export async function writeExtensionField(characterId, key, value) {
     const extensionPath = `data.extensions.${key}`;
     const isUnset = value === UNSET_VALUE;
 
-    if (isUnset) {
-        deleteValueByPath(character, extensionPath);
-    } else {
-        setValueByPath(character, extensionPath, value);
-    }
-
-    // Process JSON data
-    if (character.json_data) {
-        const jsonData = JSON.parse(character.json_data);
-        if (isUnset) {
-            deleteValueByPath(jsonData, extensionPath);
-        } else {
-            setValueByPath(jsonData, extensionPath, value);
-        }
-        character.json_data = JSON.stringify(jsonData);
-
-        // Make sure the data doesn't get lost when saving the current character
-        if (Number(characterId) === Number(context.characterId)) {
-            $('#character_json_data').val(character.json_data);
-        }
-    }
-
     // Save data to the server
     const saveDataRequest = {
         avatar: character.avatar,
@@ -2378,8 +2387,25 @@ export async function writeExtensionField(characterId, key, value) {
         body: JSON.stringify(saveDataRequest),
     });
 
-    if (!mergeResponse.ok) {
-        console.error('Failed to save extension field', mergeResponse.statusText);
+    await requireOkResponse(mergeResponse, 'Save character extension field');
+
+    if (isUnset) {
+        deleteValueByPath(character, extensionPath);
+    } else {
+        setValueByPath(character, extensionPath, value);
+    }
+
+    if (character.json_data) {
+        const jsonData = JSON.parse(character.json_data);
+        if (isUnset) {
+            deleteValueByPath(jsonData, extensionPath);
+        } else {
+            setValueByPath(jsonData, extensionPath, value);
+        }
+        character.json_data = JSON.stringify(jsonData);
+        if (Number(characterId) === Number(context.characterId)) {
+            $('#character_json_data').val(character.json_data);
+        }
     }
 }
 
@@ -2442,10 +2468,7 @@ export async function writeExtensionFieldBulk(avatars, key, value, { filterPath 
         body: JSON.stringify(requestBody),
     });
 
-    if (!mergeResponse.ok) {
-        console.error('Bulk extension field update failed', mergeResponse.statusText);
-        return { updated: [], skipped: [], failed: [] };
-    }
+    await requireOkResponse(mergeResponse, 'Save character extension fields');
 
     /** @type {BulkExtensionFieldResult} */
     const result = await mergeResponse.json();

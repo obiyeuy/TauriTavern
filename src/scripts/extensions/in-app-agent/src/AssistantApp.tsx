@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
+import { isComposingKeyboardEvent } from '../../../util/keyboard-event.js';
 import { modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import type { AssistantActions, AssistantController, ModelTarget, SettingsOptions } from './host';
 import type { AssistantDrawer } from './drawer';
@@ -185,7 +186,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
             // Consume after child controls, before SillyTavern's document shortcuts.
             event.stopPropagation();
             // Menus and inline editors that own Escape mark it handled.
-            if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+            if (event.key !== 'Escape' || event.defaultPrevented || isComposingKeyboardEvent(event)) return;
             event.preventDefault();
             if (view !== 'chat') setView('chat'); else drawer.close();
         };
@@ -267,7 +268,7 @@ export function AssistantApp({ controller, actions, drawer }: { controller: Assi
                         <textarea ref={input} rows={1} aria-label={tr('composer')} placeholder={tr('placeholder')} value={text} readOnly={preparingHere}
                             onChange={event => controller.setDraft(event.target.value)} onKeyDown={event => {
                                 if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
-                                    && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && actions.shouldSendOnEnter()) {
+                                    && !isComposingKeyboardEvent(event.nativeEvent) && actions.shouldSendOnEnter()) {
                                     event.preventDefault(); submit();
                                 }
                             }} />

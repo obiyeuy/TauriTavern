@@ -693,7 +693,7 @@ test('chat persistence and navigation', async (context) => {
                 Popup.show.input = async () => '';
                 window.location.reload = () => { reloads += 1; };
                 try {
-                    await main.saveMetadata();
+                    await assert.rejects(() => main.saveMetadata(), error => error.code === 'integrity');
                     assert.equal(reloads, 1);
                     assert.equal(payloads.get('target-chat'), external);
 

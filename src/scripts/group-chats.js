@@ -30,6 +30,8 @@ import {
     printMessages,
     substituteParams,
     characters,
+    name1,
+    user_avatar,
     setSelectedCharacterName,
     default_avatar,
     addOneMessage,
@@ -92,10 +94,13 @@ import {
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect, printTagFilters, tag_filter_type } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
-import { isExternalMediaAllowed } from './chats.js';
+import { isExternalMediaAllowed, onFileAttachmentError } from './chats.js';
 import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
 import { CHAT_COMMIT_REASON, coldSwipesEnabled, discardColdChatPayload, loadGroupChatPayload, saveGroupChatMetadata, saveGroupChatPayload } from './chat-payload-transport.js';
+import { waitForStartupExtensions } from './extensions.js';
+import { requireOkResponse } from './util/command-error-utils.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 
 export {
     selected_group,
@@ -281,6 +286,7 @@ function validateGroup(group) {
  * @returns {Promise<void>} A promise that resolves when the chat messages have been loaded.
  */
 export async function getGroupChat(groupId, reload = false, { allowNewChat = false } = {}) {
+    await waitForStartupExtensions();
     const group = groups.find((x) => x.id === groupId);
     if (!group) {
         console.warn('Group not found', groupId);
@@ -494,9 +500,10 @@ export function findGroupMemberId(arg, full = false) {
  * Gets depth prompts for group members.
  * @param {string} groupId Group ID
  * @param {number} characterId Current Character ID
+ * @param {{ replace?: typeof baseChatReplace }} [options] Text evaluator for this request.
  * @returns {{depth: number, text: string, role: string}[]} Array of depth prompts
  */
-export function getGroupDepthPrompts(groupId, characterId) {
+export function getGroupDepthPrompts(groupId, characterId, { replace = baseChatReplace } = {}) {
     if (!groupId) {
         return [];
     }
@@ -528,7 +535,7 @@ export function getGroupDepthPrompts(groupId, characterId) {
             continue;
         }
 
-        const depthPromptText = baseChatReplace(character.data?.extensions?.depth_prompt?.prompt?.trim(), null, character.name) || '';
+        const depthPromptText = replace(character.data?.extensions?.depth_prompt?.prompt?.trim(), null, character.name) || '';
         const depthPromptDepth = character.data?.extensions?.depth_prompt?.depth ?? depth_prompt_depth_default;
         const depthPromptRole = character.data?.extensions?.depth_prompt?.role ?? depth_prompt_role_default;
 
@@ -820,16 +827,20 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
  * Fetches all groups from the server and processes them.
  */
 async function getGroups() {
+    applyGroupsSnapshot(await loadGroups());
+}
+
+/** Read a group snapshot without publishing it to the current character view. */
+export async function loadGroups() {
     const response = await fetch('/api/groups/all', {
         method: 'POST',
         headers: getRequestHeaders({ omitContentType: true }),
     });
 
-    if (response.ok) {
-        /** @type {Group[]} */
-        const data = await response.json();
-        applyGroupsSnapshot(data);
-    }
+    await requireOkResponse(response, 'Load groups');
+    /** @type {Group[]} */
+    const data = await response.json();
+    return data;
 }
 
 function applyGroupsSnapshot(data) {
@@ -1014,6 +1025,7 @@ function getGroupChatNames(groupId) {
  * @returns {Promise<string|void>} Generated text or nothing if no generation occurred
  */
 async function generateGroupWrapper(byAutoMode, type = null, params = {}) {
+    await waitForStartupExtensions();
     function throwIfAborted() {
         if (params.signal instanceof AbortSignal && params.signal.aborted) {
             throw new Error('AbortSignal was fired. Group generation stopped');
@@ -1118,9 +1130,9 @@ async function generateGroupWrapper(byAutoMode, type = null, params = {}) {
 
             // Send user message as is
             const bias = getBiasStrings(userInput, type);
-            await sendMessageAsUser(userInput, bias.messageBias);
-            await saveChatConditional();
             $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
+            await sendMessageAsUser(userInput, bias.messageBias, null, false, name1, user_avatar, CHAT_COMMIT_REASON.MUTATION, onFileAttachmentError);
+            await saveChatConditional();
         }
         groupChatQueueOrder = new Map();
 
@@ -1412,6 +1424,7 @@ async function deleteGroup(id) {
         headers: getRequestHeaders(),
         body: JSON.stringify({ id: id }),
     });
+    await requireOkResponse(response, 'Delete group');
 
     if (group && Array.isArray(group.chats)) {
         for (const chatId of group.chats) {
@@ -1419,19 +1432,17 @@ async function deleteGroup(id) {
         }
     }
 
-    if (response.ok) {
-        await clearChat();
-        selected_group = null;
-        delete tag_map[id];
-        resetChatState();
-        await printMessages();
-        await getCharacters();
+    await clearChat();
+    selected_group = null;
+    delete tag_map[id];
+    resetChatState();
+    await printMessages();
+    await getCharacters();
 
-        select_rm_info('group_delete', id);
+    select_rm_info('group_delete', id);
 
-        setSelectedCharacterName('');
-        await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
-    }
+    setSelectedCharacterName('');
+    await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
 }
 
 /**
@@ -1817,7 +1828,12 @@ async function onDeleteGroupClick() {
 
     const confirm = await Popup.show.confirm(t`Delete the group?`, '<p>' + t`This will also delete all your chats with that group. If you want to delete a single conversation, select a "View past chats" option in the lower left menu.` + '</p>');
     if (confirm) {
-        deleteGroup(openGroupId);
+        try {
+            await deleteGroup(openGroupId);
+        } catch (error) {
+            console.error('Failed to delete group:', error);
+            toastr.error(toUserFacingErrorText(error), t`Could not delete group`);
+        }
     }
 }
 
@@ -2097,6 +2113,7 @@ function updateFavButtonState(state) {
  * @returns {Promise<boolean>} Whether the group was opened
  */
 export async function openGroupById(groupId, { chatId } = {}) {
+    await waitForStartupExtensions();
     if (isChatSaving) {
         toastr.info(t`Please wait until the chat is saved before switching characters.`, t`Your chat is still saving...`);
         return false;
@@ -2216,18 +2233,29 @@ async function createGroup() {
         auto_mode_delay: autoModeDelay,
     };
 
-    const createGroupResponse = await fetch('/api/groups/create', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(groupCreateModel),
-    });
+    let data;
+    try {
+        const createGroupResponse = await fetch('/api/groups/create', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(groupCreateModel),
+        });
+        await requireOkResponse(createGroupResponse, 'Create group');
+        data = await createGroupResponse.json();
+    } catch (error) {
+        console.error('Failed to create group:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not create group`);
+        return;
+    }
 
-    if (createGroupResponse.ok) {
-        newGroupMembers = [];
-        const data = await createGroupResponse.json();
+    newGroupMembers = [];
+    try {
         createTagMapFromList('#groupTagList', data.id);
         await getCharacters();
         select_rm_info('group_create', data.id);
+    } catch (error) {
+        console.error('Group was created but could not be refreshed:', error);
+        toastr.warning(toUserFacingErrorText(error), t`Group created, but could not be refreshed`);
     }
 }
 
@@ -2274,13 +2302,13 @@ export async function getGroupPastChats(groupId) {
                 headers: getRequestHeaders(),
                 body: JSON.stringify({ id: chatId }),
             });
-            if (response.ok) {
-                const data = await response.json();
-                chats.push(data);
-            }
+            await requireOkResponse(response, 'Load group chat information');
+            const data = await response.json();
+            chats.push(data);
         }
     } catch (err) {
         console.error(err);
+        toastr.error(toUserFacingErrorText(err), t`Could not load group chats`);
     }
     return chats;
 }

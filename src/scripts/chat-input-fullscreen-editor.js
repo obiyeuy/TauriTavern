@@ -1,6 +1,7 @@
 import { getMountedCodeMirrorEditor, mountCodeMirrorEditor } from './tauri/codemirror-editor.js';
 import { translate } from './i18n.js';
 import { subscribeAgentRunState } from './tauritavern/agent/agent-run-controller.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 const EXPAND_BUTTON_ID = 'send_textarea_expand';
 const EDITOR_DIALOG_ID = 'tt-chat-input-editor';
@@ -270,7 +271,7 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, ca
     // Capture before CodeMirror handles Mod-Enter as an editor command.
     dialog.addEventListener('keydown', (event) => {
         if (event.target !== textarea && !event.target.closest('.cm-content')) return;
-        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && !event.isComposing) {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && !isComposingKeyboardEvent(event)) {
             event.preventDefault();
             event.stopPropagation();
             void sendFromEditor();
@@ -279,7 +280,7 @@ export function installChatInputFullscreenEditor({ sendTextArea, sendMessage, ca
 
     dialog.addEventListener('keydown', (event) => {
         event.stopPropagation();
-        if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing) {
+        if (event.key === 'Escape' && !event.defaultPrevented && !isComposingKeyboardEvent(event)) {
             event.preventDefault();
             closeEditor({ focusSource: !isMobileHost(), reason: 'cancel' });
         }

@@ -1,7 +1,7 @@
 import {
     name1, name2, characters, chat, chat_metadata, extension_prompts, main_api,
     getCharacterCardFieldsSource, getCharacterCardFieldsLazy, createCharacterCardFields, getGeneratingModel,
-    getMaxPromptTokens, getMaxContextTokens, getMaxResponseTokens, substituteParams,
+    getMaxPromptTokens, getMaxContextTokens, getMaxResponseTokens, substituteParams, baseChatReplace,
 } from '../../../script.js';
 import { groups, selected_group } from '../../group-chats.js';
 import { power_user, collapseNewlines, EPHEMERAL_STOPPING_STRINGS } from '../../power-user.js';
@@ -31,6 +31,7 @@ import { getStringHash } from '../../utils.js';
  * @property {boolean} [replaceCharacterCard]
  * @property {Record<string, import('./MacroEnv.types.js').DynamicMacroValue>|null} [dynamicMacros]
  * @property {(value: string) => string} [postProcessFn]
+ * @property {Partial<import('./MacroEnv.types.js').MacroEnvSystem>} [system] Request-specific system facts.
  */
 /** @typedef {(env: MacroEnv, ctx: MacroEnvRawContext) => void} MacroEnvProvider */
 
@@ -154,8 +155,12 @@ class EnvBuilder {
      */
     buildFromRawEnv(ctx, engine = 'new') {
         const context = readLiveContext(engine);
+        const substitute = (text, options = {}) => substituteParams(text, { system: ctx.system, ...options });
+        const readFields = () => getCharacterCardFieldsLazy({
+            replace: (text, name1Override, name2Override) => baseChatReplace(text, name1Override, name2Override, { substitute }),
+        });
         const env = this.#build({ ...ctx, replaceCharacterCard: ctx.replaceCharacterCard ?? false },
-            context, liveVariables, substituteParams, getCharacterCardFieldsLazy);
+            context, liveVariables, substitute, readFields);
         env.bannedWords = textgenerationwebui_banned_in_macros;
         for (const { fn } of this.#providers.slice().sort((a, b) => a.order - b.order)) {
             try {
@@ -167,9 +172,12 @@ class EnvBuilder {
         return env;
     }
 
-    /** Capture facts, never the interpreted lazy character fields or macro handlers. */
-    captureContext() {
-        const env = this.buildFromRawEnv({ content: '', replaceCharacterCard: false },
+    /**
+     * Capture facts, never the interpreted lazy character fields or macro handlers.
+     * @param {Pick<MacroEnvRawContext, 'system'>} [options]
+     */
+    captureContext({ system } = {}) {
+        const env = this.buildFromRawEnv({ content: '', replaceCharacterCard: false, system },
             power_user.experimental_macro_engine ? 'new' : 'legacy');
         return structuredClone({
             ...env.context,
@@ -187,7 +195,7 @@ class EnvBuilder {
         if (!context?.character || !context.names || !context.variables || !context.settings || !context.chat) {
             throw new Error('macro.context_required: Explicit evaluation requires a complete macro context');
         }
-        const substitute = (text, options) => evaluateWithContext(text, context, options);
+        const substitute = (text, options = {}) => evaluateWithContext(text, context, { system: ctx.system, ...options });
         const readFields = () => createCharacterCardFields({
             ...Object.fromEntries(characterFields.map(([key, field]) => [field, context.character[key]])),
             groupCards: context.character.groupCards,
@@ -201,6 +209,7 @@ class EnvBuilder {
     }
 
     #build(ctx, context, variables, substitute, readFields) {
+        if (ctx.system) context = { ...context, system: { ...context.system, ...ctx.system } };
         const names = { ...context.names };
         if (ctx.name1Override != null) names.user = ctx.name1Override;
         if (ctx.name2Override != null) names.char = ctx.name2Override;

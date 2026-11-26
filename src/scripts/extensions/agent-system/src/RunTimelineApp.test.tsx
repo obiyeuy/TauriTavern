@@ -88,6 +88,13 @@ test('active hide/show and timeline/detail switches preserve the mounted event s
     await userEvent.setup().click(screen.getByRole('button', { name: 'expandTimeline' }));
     const scroller = root?.querySelector('.ttas-run-event-scroll');
     expect(scroller).not.toBeNull();
+    const resize = screen.getByRole('separator', { name: 'resizeTimelineHeight' });
+    for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+        fireEvent.keyDown(resize, { key: 'ArrowUp', ...flags });
+        expect(root?.style.getPropertyValue('--ttas-run-panel-user-height')).toBe('');
+    }
+    fireEvent.keyDown(resize, { key: 'ArrowUp' });
+    expect(root?.style.getPropertyValue('--ttas-run-panel-user-height')).not.toBe('');
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'showTimelineDetails' }));
     await waitFor(() => expect(root?.querySelector('.ttas-run-view-details')).not.toBeNull());

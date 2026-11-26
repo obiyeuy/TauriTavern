@@ -299,7 +299,7 @@ export function autoSelectInstructPreset(modelId) {
  * @param {boolean?} [options.useStopStrings] - Decides whether to use "Chat Start" and "Example Separator"
  * @returns {string[]} Array of instruct mode stopping strings.
  */
-export function getInstructStoppingSequences({ customInstruct = null, useStopStrings = null } = {}) {
+export function getInstructStoppingSequences({ customInstruct = null, useStopStrings = null, substitute = substituteParams } = {}) {
     const instruct = structuredClone(customInstruct ?? power_user.instruct);
 
     /**
@@ -318,7 +318,7 @@ export function getInstructStoppingSequences({ customInstruct = null, useStopStr
             if (sequence.trim().length > 0) {
                 const wrappedSequence = wrap(sequence);
                 // Need to respect "insert macro" setting
-                const stopString = instruct.macro ? substituteParams(wrappedSequence) : wrappedSequence;
+                const stopString = instruct.macro ? substitute(wrappedSequence) : wrappedSequence;
                 result.push(stopString);
             }
         }
@@ -356,11 +356,11 @@ export function getInstructStoppingSequences({ customInstruct = null, useStopStr
 
     if (useStopStrings ?? power_user.context.use_stop_strings) {
         if (power_user.context.chat_start) {
-            result.push(`\n${substituteParams(power_user.context.chat_start)}`);
+            result.push(`\n${substitute(power_user.context.chat_start)}`);
         }
 
         if (power_user.context.example_separator) {
-            result.push(`\n${substituteParams(power_user.context.example_separator)}`);
+            result.push(`\n${substitute(power_user.context.example_separator)}`);
         }
     }
 
@@ -385,7 +385,7 @@ export const force_output_sequence = {
  * @param {InstructSettings} customInstruct Custom instruct mode settings.
  * @returns {string} Formatted instruct mode chat message.
  */
-export function formatInstructModeChat(name, mes, isUser, isNarrator, forceAvatar, name1, name2, forceOutputSequence, customInstruct = null) {
+export function formatInstructModeChat(name, mes, isUser, isNarrator, forceAvatar, name1, name2, forceOutputSequence, customInstruct = null, { substitute = substituteParams } = {}) {
     const instruct = structuredClone(customInstruct ?? power_user.instruct);
     let includeNames = isNarrator ? false : instruct.names_behavior === names_behavior_types.ALWAYS;
 
@@ -437,10 +437,10 @@ export function formatInstructModeChat(name, mes, isUser, isNarrator, forceAvata
     let suffix = getSuffix() || '';
 
     if (instruct.macro) {
-        prefix = substituteParams(prefix, { name1Override: name1, name2Override: name2 });
+        prefix = substitute(prefix, { name1Override: name1, name2Override: name2 });
         prefix = prefix.replace(/{{name}}/gi, name || 'System');
 
-        suffix = substituteParams(suffix, { name1Override: name1, name2Override: name2 });
+        suffix = substitute(suffix, { name1Override: name1, name2Override: name2 });
         suffix = suffix.replace(/{{name}}/gi, name || 'System');
     }
 
@@ -474,9 +474,10 @@ export function formatInstructModeSystemPrompt(systemPrompt, _customInstruct = n
  * @param {object} [params]
  * @param {ContextSettings} [params.customContext] Custom context settings.
  * @param {InstructSettings} [params.customInstruct] Custom instruct mode settings.
+ * @param {typeof substituteParams} [params.substitute] Macro evaluator for this request.
  * @returns {string} Formatted instruct mode story string.
  */
-export function formatInstructModeStoryString(storyString, { customContext = null, customInstruct = null } = {}) {
+export function formatInstructModeStoryString(storyString, { customContext = null, customInstruct = null, substitute = substituteParams } = {}) {
     if (!storyString) {
         return '';
     }
@@ -490,12 +491,12 @@ export function formatInstructModeStoryString(storyString, { customContext = nul
     const separator = instructSettings.wrap ? '\n' : '';
     if (applySequences && instructSettings.story_string_prefix) {
         // TODO: Replace with a proper 'System' prompt entity name input
-        const prefix = substituteParams(instructSettings.story_string_prefix).replace(/{{name}}/gi, 'System');
+        const prefix = substitute(instructSettings.story_string_prefix).replace(/{{name}}/gi, 'System');
         storyString = prefix + separator + storyString;
     }
 
     if (applySequences && instructSettings.story_string_suffix) {
-        const suffix = substituteParams(instructSettings.story_string_suffix);
+        const suffix = substitute(instructSettings.story_string_suffix);
         storyString = storyString + suffix;
     }
 
@@ -592,7 +593,7 @@ export function formatInstructModeExamples(mesExamplesArray, name1, name2, { set
  * @param {InstructSettings} customInstruct Custom instruct settings.
  * @returns {string} Formatted instruct mode last prompt line.
  */
-export function formatInstructModePrompt(name, isImpersonate, promptBias, name1, name2, isQuiet, isQuietToLoud, customInstruct = null) {
+export function formatInstructModePrompt(name, isImpersonate, promptBias, name1, name2, isQuiet, isQuietToLoud, customInstruct = null, { substitute = substituteParams } = {}) {
     const instruct = structuredClone(customInstruct ?? power_user.instruct);
     const includeNames = name && (instruct.names_behavior === names_behavior_types.ALWAYS || (!!selected_group && instruct.names_behavior === names_behavior_types.FORCE)) && !(isQuiet && !isQuietToLoud);
 
@@ -633,7 +634,7 @@ export function formatInstructModePrompt(name, isImpersonate, promptBias, name1,
     }
 
     if (instruct.macro) {
-        sequence = substituteParams(sequence, { name1Override: name1, name2Override: name2 });
+        sequence = substitute(sequence, { name1Override: name1, name2Override: name2 });
         sequence = sequence.replace(/{{name}}/gi, name || 'System');
     }
 

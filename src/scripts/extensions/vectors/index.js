@@ -609,68 +609,60 @@ function getStringHash(str) {
  * @returns {Promise<void>}
  */
 async function processFiles(chat) {
-    try {
-        if (!settings.enabled_files) {
-            return;
+    const dataBankCollectionIds = await ingestDataBankAttachments();
+
+    if (dataBankCollectionIds.length) {
+        const queryText = await getQueryText(chat, 'file');
+        await injectDataBankChunks(queryText, dataBankCollectionIds);
+    }
+
+    for (const message of chat) {
+        // Message has no files
+        if (!Array.isArray(message?.extra?.files) || !message.extra.files.length) {
+            continue;
         }
 
-        const dataBankCollectionIds = await ingestDataBankAttachments();
+        // Trim file inserted by the script
+        const allFileText = String(message.mes || '').substring(0, message.extra.fileLength).trim();
 
-        if (dataBankCollectionIds.length) {
-            const queryText = await getQueryText(chat, 'file');
-            await injectDataBankChunks(queryText, dataBankCollectionIds);
+        // Convert kilobytes to string length
+        const thresholdLength = settings.size_threshold * 1024;
+
+        // File is too small
+        if (allFileText.length < thresholdLength) {
+            continue;
         }
 
-        for (const message of chat) {
-            // Message has no files
-            if (!Array.isArray(message?.extra?.files) || !message.extra.files.length) {
-                continue;
-            }
+        const allFileChunks = [];
+        const queryText = await getQueryText(chat, 'file');
 
-            // Trim file inserted by the script
-            const allFileText = String(message.mes || '').substring(0, message.extra.fileLength).trim();
+        for (const file of message.extra.files) {
+            const fileName = file.name;
+            const fileUrl = file.url;
+            const collectionId = getFileCollectionId(fileUrl);
+            const hashesInCollection = await getSavedHashes(collectionId);
 
-            // Convert kilobytes to string length
-            const thresholdLength = settings.size_threshold * 1024;
-
-            // File is too small
-            if (allFileText.length < thresholdLength) {
-                continue;
-            }
-
-            message.mes = message.mes.substring(message.extra.fileLength);
-
-            const allFileChunks = [];
-            const queryText = await getQueryText(chat, 'file');
-
-            for (const file of message.extra.files) {
-                const fileName = file.name;
-                const fileUrl = file.url;
-                const collectionId = getFileCollectionId(fileUrl);
-                const hashesInCollection = await getSavedHashes(collectionId);
-
-                // File is not vectorized yet
-                if (!hashesInCollection.length) {
-                    const fileText = file.text || (await getFileAttachment(fileUrl));
-                    if (!fileText) {
-                        continue;
-                    }
-                    await vectorizeFile(fileText, fileName, collectionId, settings.chunk_size, settings.overlap_percent);
+            // File is not vectorized yet
+            if (!hashesInCollection.length) {
+                const fileText = file.text || (await getFileAttachment(fileUrl));
+                if (!fileText) {
+                    continue;
                 }
-
-                const fileChunks = await retrieveFileChunks(queryText, collectionId);
-                if (fileChunks) {
-                    allFileChunks.push(fileChunks);
-                }
+                await vectorizeFile(fileText, fileName, collectionId, settings.chunk_size, settings.overlap_percent);
             }
 
-            message.mes = `${allFileChunks.join('\n\n')}\n\n${message.mes}`;
+            const fileChunks = await retrieveFileChunks(queryText, collectionId);
+            if (fileChunks) {
+                allFileChunks.push(fileChunks);
+            }
         }
-    } catch (error) {
-        console.error('Vectors: Failed to retrieve files', error);
-        if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
-            throw error;
-        }
+
+        // Keep the full attachment until every required read and retrieval succeeds.
+        const messageText = message.mes.substring(message.extra.fileLength);
+        const filePrefix = `${allFileChunks.join('\n\n')}\n\n`;
+        message.mes = filePrefix + messageText;
+        // The prompt projection may share extra with the canonical message.
+        message.extra = { ...message.extra, fileLength: filePrefix.length };
     }
 }
 
@@ -687,21 +679,18 @@ async function ingestDataBankAttachments(source) {
     for (const file of dataBank) {
         const collectionId = getFileCollectionId(file.url);
         const hashesInCollection = await getSavedHashes(collectionId);
-        dataBankCollectionIds.push(collectionId);
 
-        // File is already in the collection
-        if (hashesInCollection.length) {
-            continue;
+        if (!hashesInCollection.length) {
+            // Download and process only files without a confirmed collection.
+            const fileText = await getFileAttachment(file.url);
+            console.log(`Vectors: Retrieved file ${file.name} from Data Bank`);
+            // Convert kilobytes to string length
+            const thresholdLength = settings.size_threshold_db * 1024;
+            // Use chunk size from settings if file is larger than threshold
+            const chunkSize = file.size > thresholdLength ? settings.chunk_size_db : -1;
+            await vectorizeFile(fileText, file.name, collectionId, chunkSize, settings.overlap_percent_db);
         }
-
-        // Download and process the file
-        const fileText = await getFileAttachment(file.url);
-        console.log(`Vectors: Retrieved file ${file.name} from Data Bank`);
-        // Convert kilobytes to string length
-        const thresholdLength = settings.size_threshold_db * 1024;
-        // Use chunk size from settings if file is larger than threshold
-        const chunkSize = file.size > thresholdLength ? settings.chunk_size_db : -1;
-        await vectorizeFile(fileText, file.name, collectionId, chunkSize, settings.overlap_percent_db);
+        dataBankCollectionIds.push(collectionId);
     }
 
     return dataBankCollectionIds;
@@ -714,30 +703,23 @@ async function ingestDataBankAttachments(source) {
  * @returns {Promise<void>}
  */
 async function injectDataBankChunks(queryText, collectionIds) {
-    try {
-        const queryResults = await queryMultipleCollections(collectionIds, queryText, settings.chunk_count_db, settings.score_threshold);
-        console.debug(`Vectors: Retrieved ${collectionIds.length} Data Bank collections`, queryResults);
-        let textResult = '';
+    const queryResults = await queryMultipleCollections(collectionIds, queryText, settings.chunk_count_db, settings.score_threshold);
+    console.debug(`Vectors: Retrieved ${collectionIds.length} Data Bank collections`, queryResults);
+    let textResult = '';
 
-        for (const collectionId in queryResults) {
-            console.debug(`Vectors: Processing Data Bank collection ${collectionId}`, queryResults[collectionId]);
-            const metadata = queryResults[collectionId].metadata?.filter(x => x.text)?.sort((a, b) => a.index - b.index)?.map(x => x.text)?.filter(onlyUnique) || [];
-            textResult += metadata.join('\n') + '\n\n';
-        }
-
-        if (!textResult) {
-            console.debug('Vectors: No Data Bank chunks found');
-            return;
-        }
-
-        const insertedText = substituteParamsExtended(settings.file_template_db, { text: textResult });
-        setExtensionPrompt(EXTENSION_PROMPT_TAG_DB, insertedText, settings.file_position_db, settings.file_depth_db, settings.include_wi, settings.file_depth_role_db);
-    } catch (error) {
-        console.error('Vectors: Failed to insert Data Bank chunks', error);
-        if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
-            throw error;
-        }
+    for (const collectionId in queryResults) {
+        console.debug(`Vectors: Processing Data Bank collection ${collectionId}`, queryResults[collectionId]);
+        const metadata = queryResults[collectionId].metadata?.filter(x => x.text)?.sort((a, b) => a.index - b.index)?.map(x => x.text)?.filter(onlyUnique) || [];
+        textResult += metadata.join('\n') + '\n\n';
     }
+
+    if (!textResult) {
+        console.debug('Vectors: No Data Bank chunks found');
+        return;
+    }
+
+    const insertedText = substituteParamsExtended(settings.file_template_db, { text: textResult });
+    setExtensionPrompt(EXTENSION_PROMPT_TAG_DB, insertedText, settings.file_position_db, settings.file_depth_db, settings.include_wi, settings.file_depth_role_db);
 }
 
 /**
@@ -763,7 +745,7 @@ async function retrieveFileChunks(queryText, collectionId) {
  * @param {string} collectionId File collection ID
  * @param {number} chunkSize Chunk size
  * @param {number} overlapPercent Overlap size (in %)
- * @returns {Promise<boolean>} True if successful, false if not
+ * @returns {Promise<void>} Rejects ingestion failures; the caller owns presentation.
  */
 async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overlapPercent) {
     let toast = jQuery();
@@ -792,17 +774,9 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
         toastBody.text(`Embedding ${items.length} chunks...`);
         await insertVectorItems(collectionId, items);
 
-        toastr.clear(toast);
         console.log(`Vectors: Inserted ${chunks.length} vector items for file ${fileName} into ${collectionId}`);
-        return true;
-    } catch (error) {
+    } finally {
         toastr.clear(toast);
-        console.error('Vectors: Failed to vectorize file', error);
-        if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
-            throw error;
-        }
-        toastr.error(String(error), 'Failed to vectorize file', { preventDuplicates: true });
-        return false;
     }
 }
 
@@ -1664,7 +1638,6 @@ async function onVectorizeAllFilesClick() {
         let allSuccess = true;
 
         for (const file of allFiles) {
-            const text = await getFileAttachment(file.url);
             const collectionId = getFileCollectionId(file.url);
             const hashes = await getSavedHashes(collectionId);
 
@@ -1673,11 +1646,17 @@ async function onVectorizeAllFilesClick() {
                 continue;
             }
 
+            const text = await getFileAttachment(file.url);
             const chunkSize = getChunkSize(file);
             const overlapPercent = getOverlapPercent(file);
-            const result = await vectorizeFile(text, file.name, collectionId, chunkSize, overlapPercent);
-
-            if (!result) {
+            try {
+                await vectorizeFile(text, file.name, collectionId, chunkSize, overlapPercent);
+            } catch (error) {
+                if (VECTOR_SOURCE_ABORT_CAUSES.has(error?.cause)) {
+                    throw error;
+                }
+                console.error('Vectors: Failed to vectorize file', error);
+                toastr.error(String(error), 'Failed to vectorize file', { preventDuplicates: true });
                 allSuccess = false;
             }
         }

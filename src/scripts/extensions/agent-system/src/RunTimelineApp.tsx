@@ -10,6 +10,7 @@ import {
     type PointerEvent as ReactPointerEvent,
 } from 'react';
 
+import { isComposingKeyboardEvent } from '../../../util/keyboard-event.js';
 import type { AgentSystemTr } from './i18n';
 import type { RunTimelineController } from './RunTimelineContract';
 import {
@@ -111,6 +112,7 @@ export function RunTimelineApp(props: { controller: RunTimelineController; tr: A
     }
 
     function resizeByKey(event: ReactKeyboardEvent<HTMLButtonElement>): void {
+        if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (controller.resizeByKey(event.key, currentPanelHeight(), resizeBounds())) event.preventDefault();
     }
 

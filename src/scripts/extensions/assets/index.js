@@ -11,6 +11,8 @@ import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { escapeHtml, flashHighlight, getStringHash, isValidUrl } from '../../utils.js';
 import { t, translate } from '../../i18n.js';
+import { requireOkResponse } from '../../util/command-error-utils.js';
+import { toUserFacingErrorText } from '../../util/user-facing-error.js';
 export { MODULE_NAME };
 
 const MODULE_NAME = 'assets';
@@ -276,7 +278,9 @@ async function populateAssetsMenu(json) {
 }
 
 async function downloadAssetsList(url) {
-    await updateCurrentAssets();
+    if (!await updateCurrentAssets()) {
+        return;
+    }
 
     try {
         const response = await fetch(url, { cache: 'no-cache' });
@@ -359,22 +363,21 @@ async function installAsset(url, assetType, filename) {
             body: JSON.stringify(body),
             cache: 'no-cache',
         });
-        if (result.ok) {
-            console.debug(DEBUG_PREFIX, 'Download success.');
-            if (category === 'character') {
-                console.debug(DEBUG_PREFIX, 'Importing character ', filename);
-                const blob = await result.blob();
-                const file = new File([blob], filename, { type: blob.type });
-                const fileNameMap = new Map([[file, filename]]);
-                await processDroppedFiles([file], fileNameMap);
-                console.debug(DEBUG_PREFIX, 'Character downloaded.');
-            }
-            return true;
+        await requireOkResponse(result, 'Download asset');
+        console.debug(DEBUG_PREFIX, 'Download success.');
+        if (category === 'character') {
+            console.debug(DEBUG_PREFIX, 'Importing character ', filename);
+            const blob = await result.blob();
+            const file = new File([blob], filename, { type: blob.type });
+            const fileNameMap = new Map([[file, filename]]);
+            await processDroppedFiles([file], fileNameMap);
+            console.debug(DEBUG_PREFIX, 'Character downloaded.');
         }
-        return false;
+        return true;
     }
     catch (err) {
         console.log(err);
+        toastr.error(toUserFacingErrorText(err), t`Could not download asset`);
         return false;
     }
 }
@@ -397,14 +400,13 @@ async function deleteAsset(assetType, filename) {
             body: JSON.stringify(body),
             cache: 'no-cache',
         });
-        if (result.ok) {
-            console.debug(DEBUG_PREFIX, 'Deletion success.');
-            return true;
-        }
-        return false;
+        await requireOkResponse(result, 'Delete asset');
+        console.debug(DEBUG_PREFIX, 'Deletion success.');
+        return true;
     }
     catch (err) {
         console.log(err);
+        toastr.error(toUserFacingErrorText(err), t`Could not delete asset`);
         return false;
     }
 }
@@ -477,12 +479,15 @@ async function updateCurrentAssets() {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),
         });
-        currentAssets = result.ok ? (await result.json()) : {};
+        await requireOkResponse(result, 'Load installed assets');
+        currentAssets = await result.json();
+        return true;
     }
     catch (err) {
         console.log(err);
+        toastr.error(toUserFacingErrorText(err), t`Could not load installed assets`);
+        return false;
     }
-    console.debug(DEBUG_PREFIX, 'Current assets found:', currentAssets);
 }
 
 

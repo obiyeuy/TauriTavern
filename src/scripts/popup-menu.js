@@ -1,3 +1,5 @@
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
+
 /**
  * Shared disclosure behavior for action menus.
  * Business actions and positioning stay with the caller.
@@ -28,7 +30,7 @@ export function initPopupMenu(trigger, panel, { onOpen, closesOnClick }) {
     trigger.addEventListener('click', () => setOpen(panel.style.display === 'none'));
     for (const element of [trigger, panel]) {
         element.addEventListener('keydown', event => {
-            if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229
+            if (event.key !== 'Escape' || event.defaultPrevented || isComposingKeyboardEvent(event)
                 || panel.style.display === 'none') return;
             event.preventDefault();
             event.stopPropagation();

@@ -5,7 +5,6 @@ use chrono::{DateTime, Local};
 use tokio::fs;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
-use crate::chat_directory_identity::sanitize_chat_dir_key;
 use tt_domain::errors::DomainError;
 use tt_domain::models::chat::{normalize_chat_file_name, normalize_chat_file_stem};
 use tt_domain::models::filename::sanitize_filename;
@@ -46,10 +45,6 @@ impl FileChatRepository {
         }
 
         Ok(())
-    }
-
-    pub(super) fn sanitize_path_component(value: &str, fallback: &str) -> String {
-        sanitize_chat_dir_key(value, fallback)
     }
 
     async fn payload_lock(&self, path: &Path) -> Arc<Mutex<()>> {
@@ -311,18 +306,5 @@ impl FileChatRepository {
         }
 
         Ok(sanitized)
-    }
-
-    /// Get the cache key for a chat
-    pub(super) fn get_cache_key(
-        &self,
-        character_name: &str,
-        file_name: &str,
-    ) -> Result<String, DomainError> {
-        Ok(format!(
-            "{}:{}",
-            Self::sanitize_path_component(character_name, "character"),
-            Self::normalize_jsonl_file_stem(file_name)?
-        ))
     }
 }

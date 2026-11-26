@@ -1,9 +1,13 @@
 import { mobileChatIcon as icon } from './mobile-chat-icons.js';
+import { syncAttribute, syncBooleanProperty, syncText } from './mobile-chat-dom.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
+import { isControlDisabled } from './legacy-controls.js';
 
 const TEXT_TYPES = new Set(['', 'text', 'number', 'password', 'url', 'search', 'email', 'tel']);
 const SEARCHABLE_OPTIONS = 10;
 /** Credential fields are never echoed back into the page. */
-const isSensitive = element => element.type === 'password' || /api_key|secret|password/i.test(element.id);
+const isSensitive = element => element.type === 'password' || element.hasAttribute('data-tt-sensitive')
+    || element.classList.contains('masked-secret') || /api_key|secret|password/i.test(element.id);
 
 /**
  * Telegram-style settings page bound to native controls. The native inputs
@@ -14,15 +18,23 @@ const isSensitive = element => element.type === 'password' || /api_key|secret|pa
  * `schema.sections` is a list, or a function of the document for pages whose
  * rows depend on native state (the API page follows the selected source).
  */
-export function renderSettingsPage({ document, schema, translate: t = text => text, openNative }) {
+export function renderSettingsPage({ document, schema, translate: t = text => text, openNative, save }) {
     const win = document.defaultView;
     const page = document.createElement('div');
     page.className = 'tt-sp';
+    if (schema.intro) {
+        const intro = document.createElement('p');
+        intro.className = 'tt-sp-intro';
+        intro.textContent = t(schema.intro);
+        page.append(intro);
+    }
     const groups = document.createElement('div');
     page.append(groups);
     let rows = [];
     let signature = '';
     let timers = [];
+    let saving = false;
+    let disposed = false;
 
     const fire = (element, events) => {
         for (const type of events) element.dispatchEvent(new win.Event(type, { bubbles: true }));
@@ -32,10 +44,13 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         const labelled = (element.getAttribute('aria-labelledby') || '').split(/\s+/)
             .map(id => id && document.getElementById(id)?.textContent).filter(Boolean).join(' ');
         const label = element.closest('label') || (element.id && document.querySelector(`label[for="${element.id}"]`));
-        return clean(labelled || label?.textContent || element.getAttribute('aria-label')
-            || element.getAttribute('title') || element.getAttribute('placeholder') || element.id);
+        return [labelled, label?.textContent, element.getAttribute('aria-label'), label?.getAttribute('title'),
+            element.getAttribute('title'), element.getAttribute('placeholder'), element.id]
+            .map(clean).find(Boolean) || '';
     }
     const labelOf = (row, element) => row.label ? t(row.label) : nativeLabel(element);
+    const helpOf = (row, element) => row.help ? t(row.help) : clean((element.getAttribute('aria-describedby') || '')
+        .split(/\s+/).map(id => id && document.getElementById(id)?.textContent).filter(Boolean).join(' '));
 
     // Native code often reacts asynchronously (themes, presets, connecting).
     function settle(delays = [400]) {
@@ -47,23 +62,63 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
     const sheet = document.createElement('div');
     sheet.className = 'tt-sp-sheet';
     sheet.hidden = true;
-    sheet.innerHTML = '<button type="button" class="tt-sp-sheet-scrim"></button><div class="tt-sp-dialog" role="dialog" aria-modal="true"><h3></h3><div class="tt-sp-sheet-body"></div><div class="tt-sp-actions" hidden></div></div>';
+    sheet.innerHTML = '<button type="button" class="tt-sp-sheet-scrim" tabindex="-1"></button><div class="tt-sp-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-sp-edit-title" tabindex="-1"><h3 id="tt-sp-edit-title"></h3><div class="tt-sp-sheet-body"></div><div class="tt-sp-actions" hidden></div></div>';
+    const dialog = sheet.querySelector('.tt-sp-dialog');
     const sheetTitle = sheet.querySelector('h3');
     const sheetBody = sheet.querySelector('.tt-sp-sheet-body');
     const sheetActions = sheet.querySelector('.tt-sp-actions');
+    const sheetError = document.createElement('p');
+    sheetError.className = 'tt-sp-edit-error';
+    sheetError.setAttribute('role', 'alert');
+    sheetError.tabIndex = -1;
+    sheetError.hidden = true;
+    sheetActions.before(sheetError);
     sheet.querySelector('.tt-sp-sheet-scrim').setAttribute('aria-label', t('Close'));
     sheet.querySelector('.tt-sp-sheet-scrim').addEventListener('click', () => closeSheet());
     let sheetOrigin;
 
     function closeSheet() {
         if (sheet.hidden) return false;
+        if (saving) return true;
         sheet.hidden = true;
         sheetOrigin?.focus({ preventScroll: true });
         return true;
     }
 
+    function onSheetKeyDown(event) {
+        if (sheet.hidden || disposed || isComposingKeyboardEvent(event)) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            closeSheet();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+        const controls = [...dialog.querySelectorAll('button, input, textarea, select, a[href]')]
+            .filter(control => !control.disabled && !control.closest('[hidden]') && control.tabIndex >= 0);
+        const first = controls[0];
+        const last = controls.at(-1);
+        if (!first) {
+            event.preventDefault();
+            dialog.focus({ preventScroll: true });
+        } else if (!controls.includes(document.activeElement)) {
+            event.preventDefault();
+            (event.shiftKey ? last : first).focus({ preventScroll: true });
+        } else if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus({ preventScroll: true });
+        } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus({ preventScroll: true });
+        }
+        event.stopImmediatePropagation();
+    }
+    document.addEventListener('keydown', onSheetKeyDown, true);
+
     function presentSheet(title, origin, actions = []) {
         sheetTitle.textContent = title;
+        sheetError.hidden = true;
+        sheetError.textContent = '';
         sheetActions.replaceChildren();
         for (const [label, action] of actions) {
             const button = document.createElement('button');
@@ -77,15 +132,74 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         sheet.hidden = false;
     }
 
-    function openChoice(title, select, origin) {
+    function addHelp(help) {
+        if (!help) return;
+        const description = document.createElement('p');
+        description.id = 'tt-sp-edit-help';
+        description.className = 'tt-sp-edit-help';
+        description.textContent = help;
+        sheetBody.append(description);
+        return description.id;
+    }
+
+    /** Every editor confirms persistence through the native settings owner. */
+    async function saveEditing(element) {
+        saving = true;
+        sheetActions.setAttribute('aria-busy', 'true');
+        const submit = sheetActions.lastElementChild;
+        const label = submit?.textContent;
+        if (submit) submit.textContent = t('Saving…');
+        const controls = [...sheet.querySelectorAll('button, input, textarea')].map(control => ({
+            control, disabled: control.disabled,
+        }));
+        for (const { control } of controls) control.disabled = true;
+        sheetError.hidden = true;
+        try {
+            await save(element);
+            return true;
+        } catch (failure) {
+            const message = t('Settings could not be saved.');
+            const detail = failure instanceof Error ? failure.message : String(failure);
+            sheetError.textContent = detail === message ? message : `${message} ${detail}`;
+            sheetError.hidden = false;
+            return false;
+        } finally {
+            saving = false;
+            sheetActions.removeAttribute('aria-busy');
+            if (submit) submit.textContent = label;
+            for (const { control, disabled } of controls) control.disabled = disabled;
+            if (!sheetError.hidden && !disposed) sheetError.focus({ preventScroll: true });
+        }
+    }
+
+    function openChoice(title, select, origin, row) {
         sheetBody.replaceChildren();
+        addHelp(helpOf(row, select));
         const list = document.createElement('div');
         list.className = 'tt-sp-options';
         list.setAttribute('role', 'radiogroup');
-        const options = [...select.options].filter(option => !option.disabled && !option.hidden && option.value !== '');
+        list.setAttribute('aria-labelledby', sheetTitle.id);
+        const options = [...select.options].filter(option => !option.disabled && !option.hidden
+            && (!select.multiple || option.value !== '') && clean(option.textContent));
         // Multiple selects (active lorebooks) toggle options and stay open.
         const multiple = select.multiple;
         if (multiple) list.setAttribute('role', 'group');
+        const syncChoices = () => {
+            for (const [index, option] of options.entries()) {
+                list.children[index].setAttribute('aria-checked', String(option.selected));
+            }
+        };
+        const submit = async () => {
+            if (saving) return;
+            if (save) sheetActions.lastElementChild.hidden = false;
+            if (save && !await saveEditing(select)) {
+                syncChoices();
+                return;
+            }
+            if (disposed) return;
+            closeSheet();
+            settle([400, 1500]);
+        };
         for (const option of options) {
             const button = document.createElement('button');
             button.type = 'button';
@@ -94,7 +208,14 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
             button.setAttribute('aria-checked', String(multiple ? option.selected : option.value === select.value));
             button.innerHTML = `<span class="${multiple ? 'tt-sp-box' : 'tt-sp-radio'}" aria-hidden="true"></span><span></span>`;
             button.lastElementChild.textContent = clean(option.textContent);
+            if (option.title) {
+                const help = document.createElement('small');
+                help.className = 'tt-sp-option-help';
+                help.textContent = t(option.title);
+                button.lastElementChild.append(help);
+            }
             button.addEventListener('click', () => {
+                if (saving) return;
                 if (multiple) {
                     option.selected = !option.selected;
                     button.setAttribute('aria-checked', String(option.selected));
@@ -106,8 +227,8 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
                     select.value = option.value;
                     fire(select, ['input', 'change']);
                 }
-                closeSheet();
-                settle([400, 1500]);
+                syncChoices();
+                void submit();
             });
             list.append(button);
         }
@@ -118,43 +239,101 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
             filter.className = 'tt-sp-filter';
             filter.placeholder = t('Search');
             filter.setAttribute('aria-label', t('Search'));
+            const empty = document.createElement('p');
+            empty.className = 'tt-sp-options-empty';
+            empty.setAttribute('role', 'status');
+            empty.textContent = t('No matching options. Try another search.');
+            empty.hidden = true;
             filter.addEventListener('input', () => {
                 const query = filter.value.trim().toLocaleLowerCase();
                 for (const item of list.children) item.hidden = !item.textContent.toLocaleLowerCase().includes(query);
+                empty.hidden = [...list.children].some(item => !item.hidden);
             });
             sheetBody.append(filter);
+            sheetBody.append(list, empty);
+        } else {
+            sheetBody.append(list);
         }
-        sheetBody.append(list);
-        presentSheet(title, origin, multiple ? [['Done', () => closeSheet()]] : []);
+        presentSheet(title, origin, [['Close', () => closeSheet()], [multiple ? 'Done' : 'Retry', () => void submit()]]);
+        sheetActions.lastElementChild.hidden = !multiple;
         const current = list.querySelector('[aria-checked="true"]');
         current?.scrollIntoView?.({ block: 'center' });
         (current || list.firstElementChild)?.focus({ preventScroll: true });
     }
 
-    function openEdit(title, element, origin) {
+    function openEdit(title, element, origin, row) {
         sheetBody.replaceChildren();
-        const field = document.createElement(element.tagName === 'TEXTAREA' ? 'textarea' : 'input');
+        const address = element.type === 'url';
+        const numericRange = element.type === 'range';
+        const field = document.createElement(element.tagName === 'TEXTAREA' || address ? 'textarea' : 'input');
         field.className = 'tt-sp-field';
-        if (field.tagName === 'INPUT') field.type = element.type === 'number' ? 'number' : 'text';
-        for (const attribute of ['min', 'max', 'step', 'placeholder', 'inputmode']) {
+        if (address) {
+            field.classList.add('tt-sp-address');
+            field.rows = 3;
+        }
+        if (field.tagName === 'INPUT') field.type = row.sensitive || isSensitive(element) ? 'password'
+            : numericRange ? 'number' : element.type;
+        for (const attribute of ['min', 'max', 'step', 'required', 'pattern', 'minlength', 'maxlength', 'placeholder', 'inputmode', 'list']) {
             if (element.hasAttribute(attribute)) field.setAttribute(attribute, element.getAttribute(attribute));
         }
         field.autocomplete = 'off';
+        field.setAttribute('autocapitalize', 'none');
         field.spellcheck = false;
+        if (numericRange) field.required = true;
+        if (field.type === 'number' && !field.hasAttribute('inputmode')
+            && element.hasAttribute('min') && Number(element.min) >= 0) {
+            field.inputMode = !element.step || Number.isInteger(Number(element.step)) ? 'numeric' : 'decimal';
+        }
         field.value = element.value;
         field.setAttribute('aria-label', title);
-        const save = () => {
+        sheetBody.append(field);
+        const descriptionId = addHelp(helpOf(row, element));
+        if (descriptionId) field.setAttribute('aria-describedby', descriptionId);
+        const submit = async () => {
+            if (saving) return;
+            if (numericRange) {
+                // Model discovery can change limits while this editor is open.
+                // Validate the draft against the owner’s latest bounds before
+                // assigning it, since a range silently clamps invalid values.
+                for (const attribute of ['min', 'max', 'step']) {
+                    if (element.hasAttribute(attribute)) field.setAttribute(attribute, element.getAttribute(attribute));
+                    else field.removeAttribute(attribute);
+                }
+            }
+            if (address) {
+                // A wrapping editor still uses the native URL input's rules.
+                const validator = element.cloneNode(false);
+                validator.value = field.value;
+                field.setCustomValidity(validator.checkValidity() ? '' : validator.validationMessage || t('Enter a valid URL.'));
+            }
+            if (!field.reportValidity()) return;
             if (element.value !== field.value) {
                 element.value = field.value;
-                fire(element, ['input', 'change']);
+                fire(element, numericRange ? ['input', 'change', 'mouseup', 'touchend'] : ['input', 'change']);
             }
+            if (save && !await saveEditing(element)) {
+                // A key can be stored even when its metadata refresh failed.
+                // Only the native owner decides when the draft is acknowledged.
+                if ((row.sensitive || isSensitive(element)) && !element.value) field.value = '';
+                return;
+            }
+            if (disposed) return;
             closeSheet();
             settle();
         };
-        if (field.tagName === 'INPUT') field.addEventListener('keydown', event => { if (event.key === 'Enter') save(); });
-        sheetBody.append(field);
-        presentSheet(title, origin, [['Cancel', () => closeSheet()], ['Save', save]]);
-        field.focus({ preventScroll: true });
+        if (field.tagName === 'INPUT' || address) field.addEventListener('keydown', event => {
+            if (isComposingKeyboardEvent(event)) return;
+            if (event.key === 'Enter') { event.preventDefault(); void submit(); }
+        });
+        presentSheet(title, origin, [['Cancel', () => closeSheet()], ['Save', () => void submit()]]);
+        // Native focus scrolling keeps the input visible below long help text
+        // and when a mobile keyboard shortens the content viewport.
+        field.focus();
+        if (address) {
+            field.setSelectionRange(0, 0);
+            field.scrollTop = 0;
+            field.scrollLeft = 0;
+        }
     }
 
     function rowButton(className = '') {
@@ -176,28 +355,29 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
             settle([400, 1500]);
         });
         return { node, sync() {
-            node.setAttribute('aria-checked', String(element.checked));
-            node.disabled = element.disabled;
+            syncAttribute(node, 'aria-checked', String(element.checked));
+            syncBooleanProperty(node, 'disabled', element.disabled);
         } };
     }
 
     function selectRow(row, element) {
-        const node = rowButton();
+        const node = rowButton('tt-sp-select');
         node.setAttribute('aria-haspopup', 'dialog');
         node.insertAdjacentHTML('beforeend', '<span class="tt-sp-value"></span>');
         const label = labelOf(row, element);
         node.firstElementChild.textContent = label;
-        node.addEventListener('click', () => openChoice(label, element, node));
+        node.addEventListener('click', () => openChoice(label, element, node, row));
         return { node, sync() {
             // An empty list (presets not loaded yet) has nothing to choose.
-            const choices = [...element.options].filter(option => option.value !== '');
+            const choices = [...element.options].filter(option => !option.disabled && !option.hidden
+                && (!element.multiple || option.value !== '') && clean(option.textContent));
             const empty = !choices.length;
-            const chosen = [...element.selectedOptions].filter(option => option.value !== '' || !element.multiple);
-            node.lastElementChild.textContent = empty ? t('Not set')
+            const chosen = [...element.selectedOptions];
+            syncText(node.lastElementChild, empty ? t('Not set')
                 : element.multiple ? (chosen.length ? chosen.map(option => clean(option.textContent)).join(', ') : t('None'))
-                    : clean(chosen[0]?.textContent);
+                    : clean(chosen[0]?.textContent));
             node.lastElementChild.classList.toggle('tt-sp-empty', empty);
-            node.disabled = element.disabled || empty;
+            syncBooleanProperty(node, 'disabled', element.disabled || empty);
         } };
     }
 
@@ -207,30 +387,34 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         node.insertAdjacentHTML('beforeend', '<span class="tt-sp-value"></span>');
         const label = labelOf(row, element);
         node.firstElementChild.textContent = label;
-        const masked = isSensitive(element);
-        node.addEventListener('click', () => openEdit(label, element, node));
+        const masked = row.sensitive || isSensitive(element);
+        node.addEventListener('click', () => openEdit(label, element, node, row));
         return { node, sync() {
             const value = element.value;
-            node.lastElementChild.textContent = masked ? t(value ? 'Entered' : 'Not set') : value || t('Not set');
-            node.lastElementChild.classList.toggle('tt-sp-empty', !value);
-            node.disabled = element.disabled || element.readOnly;
+            const stored = element.dataset.secretSaved === 'true';
+            syncText(node.lastElementChild, masked ? t(value ? 'Entered' : stored ? 'Saved' : 'Not set')
+                : value && !value.trim() ? JSON.stringify(value) : value || t('Not set'));
+            node.lastElementChild.classList.toggle('tt-sp-empty', !value && !stored);
+            syncBooleanProperty(node, 'disabled', element.disabled || element.readOnly);
         } };
     }
 
     function sliderRow(row, element) {
         const node = document.createElement('div');
         node.className = 'tt-sp-row tt-sp-slider';
-        node.innerHTML = '<span class="tt-sp-label"></span><span class="tt-sp-value"></span><input type="range">';
-        node.firstElementChild.textContent = labelOf(row, element);
+        node.innerHTML = '<span class="tt-sp-label"></span><button type="button" class="tt-sp-value"></button><input type="range">';
+        const label = labelOf(row, element);
+        node.firstElementChild.textContent = label;
         const value = node.querySelector('.tt-sp-value');
+        value.setAttribute('aria-label', `${t('Edit value')}: ${label}`);
+        value.setAttribute('aria-haspopup', 'dialog');
+        value.title = t('Enter an exact value');
+        value.addEventListener('click', () => openEdit(label, element, value, row));
         const range = node.querySelector('input');
-        range.setAttribute('aria-label', labelOf(row, element));
-        for (const attribute of ['min', 'max', 'step']) {
-            if (element.hasAttribute(attribute)) range.setAttribute(attribute, element.getAttribute(attribute));
-        }
+        range.setAttribute('aria-label', label);
         const counter = document.getElementById(`${element.id}_counter`) || document.querySelector(`input[data-for="${element.id}"]`);
         const show = () => {
-            value.textContent = counter?.value || element.value;
+            syncText(value, counter?.value || element.value);
             const min = Number(range.min || 0);
             const max = Number(range.max || 100);
             const ratio = max > min ? (Number(range.value) - min) / (max - min) : 0;
@@ -244,8 +428,12 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         // Some native sliders apply only on release.
         range.addEventListener('change', () => { fire(element, ['change', 'mouseup', 'touchend']); settle(); });
         return { node, sync() {
+            for (const attribute of ['min', 'max', 'step']) {
+                syncAttribute(range, attribute, element.getAttribute(attribute));
+            }
             range.value = element.value;
-            range.disabled = element.disabled;
+            syncBooleanProperty(range, 'disabled', element.disabled);
+            syncBooleanProperty(value, 'disabled', element.disabled);
             show();
         } };
     }
@@ -258,7 +446,10 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
             settle([400, 1500, 4000]);
         });
         return { node, sync() {
-            node.disabled = element.disabled || element.classList.contains('disabled');
+            const busy = element.getAttribute('aria-busy') === 'true';
+            syncBooleanProperty(node, 'disabled', isControlDisabled(element));
+            syncText(node.firstElementChild, busy && clean(element.textContent) || labelOf(row, element));
+            syncAttribute(node, 'aria-busy', busy ? 'true' : null);
         } };
     }
 
@@ -269,8 +460,8 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         node.innerHTML = '<span class="tt-sp-label"></span><span class="tt-sp-value"></span>';
         node.firstElementChild.textContent = t(row.label || 'Status');
         return { node, sync() {
-            node.lastElementChild.textContent = clean(element.textContent);
-            node.dataset.ttOnline = String(Boolean(row.online?.()));
+            syncText(node.lastElementChild, clean(element.textContent));
+            syncAttribute(node, 'data-tt-online', String(Boolean(row.online?.())));
         } };
     }
 
@@ -290,14 +481,14 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         });
         return { node, sync() {
             const title = clean(row.title?.(element));
-            label.textContent = title;
-            subtitle.textContent = clean(row.subtitle?.(element));
-            subtitle.hidden = !subtitle.textContent;
+            syncText(label, title);
+            syncText(subtitle, clean(row.subtitle?.(element)));
+            syncBooleanProperty(subtitle, 'hidden', !subtitle.textContent);
             const image = row.image?.(element);
             avatar.style.backgroundImage = image ? `url(${JSON.stringify(image)})` : '';
-            avatar.textContent = image ? '' : [...title][0] || '';
+            syncText(avatar, image ? '' : [...title][0] || '');
             const selected = Boolean(row.selected?.(element));
-            node.setAttribute('aria-current', String(selected));
+            syncAttribute(node, 'aria-current', String(selected));
         } };
     }
 
@@ -309,13 +500,17 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         }
         const element = row.element || (row.action && document.getElementById(row.action)) || document.getElementById(row.id);
         if (!element) return null;
-        if (row.action) return actionRow(row, element);
-        if (element.tagName === 'SELECT') return selectRow(row, element);
-        if (element.tagName === 'TEXTAREA') return textRow(row, element);
-        if (element.tagName !== 'INPUT') return null;
-        if (element.type === 'checkbox') return toggleRow(row, element);
-        if (element.type === 'range') return sliderRow(row, element);
-        return TEXT_TYPES.has(element.type) ? textRow(row, element) : null;
+        let rendered;
+        if (row.action) rendered = actionRow(row, element);
+        else if (element.tagName === 'SELECT') rendered = selectRow(row, element);
+        else if (element.tagName === 'TEXTAREA') rendered = textRow(row, element);
+        else if (element.tagName === 'INPUT') {
+            if (element.type === 'checkbox') rendered = toggleRow(row, element);
+            else if (element.type === 'range') rendered = sliderRow(row, element);
+            else if (TEXT_TYPES.has(element.type)) rendered = textRow(row, element);
+        }
+        if (rendered) rendered.controlId = element.id;
+        return rendered;
     }
 
     const currentSections = () => typeof schema.sections === 'function' ? schema.sections(document) : schema.sections;
@@ -323,15 +518,18 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
         .map(row => row.element?.id || row.element?.className || row.pick?.dataset?.avatarId || row.key || row.action || row.status || row.id).join(',')}`).join('|');
 
     function build(sections) {
+        const focused = rows.find(row => row.node.contains(document.activeElement));
+        const controlId = focused?.controlId;
+        const nestedTag = document.activeElement === focused?.node ? null : document.activeElement?.tagName;
         signature = keyOf(sections);
         rows = [];
         groups.replaceChildren();
         for (const section of sections) {
             const built = section.rows.map(rowFor).filter(Boolean);
             if (!built.length) continue;
-            const group = document.createElement('section');
+            const group = document.createElement(section.collapsed ? 'details' : 'section');
             group.className = 'tt-sp-group';
-            const heading = document.createElement('h2');
+            const heading = document.createElement(section.collapsed ? 'summary' : 'h2');
             heading.textContent = t(section.title);
             group.append(heading, ...built.map(row => row.node));
             if (section.note) {
@@ -344,6 +542,10 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
             rows.push(...built);
         }
         refresh();
+        if (controlId) {
+            const replacement = rows.find(row => row.controlId === controlId)?.node;
+            (nestedTag ? replacement?.querySelector(nestedTag.toLowerCase()) : replacement)?.focus({ preventScroll: true });
+        }
     }
 
     function rebuildIfChanged() {
@@ -370,11 +572,20 @@ export function renderSettingsPage({ document, schema, translate: t = text => te
     function refresh() {
         for (const row of rows) row.sync();
     }
+    function onNativeControlChange(event) {
+        if (event.target?.id && rows.some(row => row.controlId === event.target.id)) refresh();
+    }
+    document.addEventListener('change', onNativeControlChange);
     build(currentSections());
     return {
         element: page,
         refresh() { refresh(); rebuildIfChanged(); },
         closeSheet,
-        dispose() { for (const timer of timers) win.clearTimeout(timer); },
+        dispose() {
+            disposed = true;
+            for (const timer of timers) win.clearTimeout(timer);
+            document.removeEventListener('keydown', onSheetKeyDown, true);
+            document.removeEventListener('change', onNativeControlChange);
+        },
     };
 }

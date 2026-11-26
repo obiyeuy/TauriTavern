@@ -1,5 +1,5 @@
 import { event_types, eventSource, saveSettingsDebounced } from '../../../script.js';
-import { deleteAttachment, getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment, uploadFileAttachmentToServer } from '../../chats.js';
+import { deleteAttachment, disableAttachment, enableAttachment, getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment, replaceAttachment, uploadFileAttachmentToServer } from '../../chats.js';
 import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
@@ -124,10 +124,8 @@ async function updateDataBankAttachment(args, value) {
         return '';
     }
 
-    await deleteAttachment(attachment, source, () => { }, false);
     const file = new File([value], attachment.name, { type: 'text/plain' });
-    const url = await uploadFileAttachmentToServer(file, source);
-    return url;
+    return replaceAttachment(attachment, source, file, source, () => { });
 }
 
 /**
@@ -165,11 +163,7 @@ async function disableDataBankAttachment(args, value) {
         return '';
     }
 
-    if (extension_settings.disabled_attachments.includes(attachment.url)) {
-        return '';
-    }
-
-    extension_settings.disabled_attachments.push(attachment.url);
+    disableAttachment(attachment, () => { });
     return '';
 }
 
@@ -188,12 +182,7 @@ async function enableDataBankAttachment(args, value) {
         return '';
     }
 
-    const index = extension_settings.disabled_attachments.indexOf(attachment.url);
-    if (index === -1) {
-        return '';
-    }
-
-    extension_settings.disabled_attachments.splice(index, 1);
+    enableAttachment(attachment, () => { });
     return '';
 }
 

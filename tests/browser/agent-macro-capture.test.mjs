@@ -84,6 +84,26 @@ try {
 
     console.log('PASS: real Agent dry-run captures awaited extension changes without repeating character write macros');
 
+    const { macros } = getModule('scripts/macros/macro-system.js').namespace;
+    const { createMacroContextFromSnapshot } = getModule('scripts/tauritavern/agent/frozen-run-input-snapshot.js').namespace;
+    macros.envBuilder.registerProvider(env => { env.extra.budgetSeenFromProvider = env.system.maxResponse; });
+    macros.register('budgetSeenFromProvider', { handler: ({ env }) => String(env.extra.budgetSeenFromProvider) });
+    const userResponseLength = openai.oai_settings.openai_max_tokens;
+    try {
+        openai.oai_settings.openai_max_tokens = 1024;
+        const { frozenRunInputSnapshot: frozenBudget } = await buildAgentPromptSnapshotSeed({
+            generateOptions: { responseLength: 32 },
+            agentContextPolicy: { initialChatHistoryMessages: -1, includeActivatedWorldInfo: false },
+            agentSystemPrompt: 'Inspect the captured inputs.',
+        });
+        const macroContext = createMacroContextFromSnapshot(frozenBudget, frozenBudget.promptInputs);
+        assert.equal(macros.evaluateWithContext('{{maxResponse}}/{{budgetSeenFromProvider}}', macroContext), '32/32');
+        assert.equal(openai.oai_settings.openai_max_tokens, 1024);
+    } finally {
+        openai.oai_settings.openai_max_tokens = userResponseLength;
+    }
+    console.log('PASS: frozen Agent macros and provider data share the request response budget');
+
     const worldInfo = getModule('scripts/world-info.js').namespace;
     const { buildPromptAssemblySnapshot } = getModule('tauri/main/api/agent-prompt-assembly.js').namespace;
     const positions = worldInfo.world_info_position;

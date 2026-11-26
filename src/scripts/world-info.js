@@ -103,7 +103,6 @@ export let world_info_max_recursion_steps = 0;
 let worldInfoSettingsSavePending = false;
 const scheduleWorldInfoSettingsSave = debounce(() => {
     worldInfoSettingsSavePending = false;
-    Object.assign(world_info, { globalSelect: selected_world_info });
     saveSettings();
 }, debounce_timeout.relaxed);
 
@@ -119,7 +118,6 @@ export function flushPendingWorldInfoSettings() {
 
     worldInfoSettingsSavePending = false;
     cancelDebounce(scheduleWorldInfoSettingsSave);
-    Object.assign(world_info, { globalSelect: selected_world_info });
     return true;
 }
 const sortFn = (a, b) => b.order - a.order;
@@ -832,6 +830,7 @@ class WorldInfoTimedEffects {
 }
 
 export function getWorldInfoSettings() {
+    Object.assign(world_info, { globalSelect: selected_world_info });
     return {
         world_info,
         world_info_depth,
@@ -915,14 +914,14 @@ export const wi_anchor_position = {
  * @param {WIGlobalScanData} [globalScanData=defaultGlobalScanData] Chat independent context to be scanned
  * @returns {Promise<WIPromptResult>} The world info string and depth.
  */
-export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanData) {
+export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanData, { substitute = substituteParams } = {}) {
     if (globalScanData === undefined) {
         globalScanData = defaultGlobalScanData;
     }
 
     let worldInfoString = '', worldInfoBefore = '', worldInfoAfter = '';
 
-    const activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun, globalScanData);
+    const activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun, globalScanData, { substitute });
     worldInfoBefore = activatedWorldInfo.worldInfoBefore;
     worldInfoAfter = activatedWorldInfo.worldInfoAfter;
     worldInfoString = worldInfoBefore + worldInfoAfter;
@@ -4847,11 +4846,11 @@ function parseDecorators(content) {
  * @returns {Promise<WIActivated>} The world info activated.
  */
 //MARK: checkWorldInfo
-export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData = defaultGlobalScanData) {
-    return checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData);
+export async function checkWorldInfo(chat, maxContext, isDryRun, globalScanData = defaultGlobalScanData, { substitute = substituteParams } = {}) {
+    return checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData, substitute);
 }
 
-async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData) {
+async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData, substitute) {
     const context = getContext();
     const buffer = new WorldInfoBuffer(chat, globalScanData);
 
@@ -4863,7 +4862,7 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
     // Put this code here since otherwise, the chat reference is modified
     for (const key of Object.keys(context.extensionPrompts)) {
         if (context.extensionPrompts[key]?.scan) {
-            const prompt = await getExtensionPromptByName(key);
+            const prompt = await getExtensionPromptByName(key, { substitute });
             if (prompt) {
                 buffer.addInject(prompt);
             }
@@ -5056,7 +5055,7 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
 
             // PRIMARY KEYWORDS
             let primaryKeyMatch = entry.key.find(key => {
-                const substituted = substituteParams(key);
+                const substituted = substitute(key);
                 return substituted && buffer.matchKeys(textToScan, substituted.trim(), entry);
             });
 
@@ -5088,7 +5087,7 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
                 let hasAnyMatch = false;
                 let hasAllMatch = true;
                 for (let keysecondary of entry.keysecondary) {
-                    const secondarySubstituted = substituteParams(keysecondary);
+                    const secondarySubstituted = substitute(keysecondary);
                     const hasSecondaryMatch = secondarySubstituted && buffer.matchKeys(textToScan, secondarySubstituted.trim(), entry);
 
                     if (hasSecondaryMatch) hasAnyMatch = true;
@@ -5197,7 +5196,7 @@ async function checkWorldInfoInternal(chat, maxContext, isDryRun, globalScanData
             }
 
             // Substitute macros inline, for both this checking and also future processing
-            entry.content = substituteParams(entry.content);
+            entry.content = substitute(entry.content);
             const batchBaseContent = newContent;
             newContent += `${entry.content}\n`;
 
@@ -6033,12 +6032,19 @@ export async function importWorldInfo(file) {
     }
 
     const sanitizedWorldName = await getSanitizedWorldInfoName(file.name, { importFilename: true });
-    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import', deleteAction: (existingName) => deleteWorldInfo(existingName) });
+    const existingWorldName = world_names.find(name => equalsIgnoreCaseAndAccents(name, sanitizedWorldName));
+    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import' });
     if (!allowed) {
         return false;
     }
 
     try {
+        if (existingWorldName) {
+            // Replace the exact existing file so its links survive case/accent matches.
+            // The repository validates and atomically publishes before changing it.
+            formData.set('avatar', file, `${existingWorldName}.json`);
+            await flushWorldInfoSaves('worldinfo_import', [existingWorldName]);
+        }
         const result = await fetch('/api/worldinfo/import', {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),
@@ -6047,13 +6053,13 @@ export async function importWorldInfo(file) {
         });
 
         if (!result.ok) {
-            throw new Error(`Failed to import world info: ${result.statusText}`);
+            throw new Error(await result.text() || `Failed to import world info: ${result.statusText}`);
         }
 
         const data = await result.json();
 
         if (data.name) {
-            await updateWorldInfoList();
+            await refreshWorldInfoAfterExternalWrite(data.name, { created: !existingWorldName });
 
             const newIndex = world_names.indexOf(data.name);
             if (newIndex >= 0) {
@@ -6064,7 +6070,7 @@ export async function importWorldInfo(file) {
         }
     } catch (error) {
         console.error('Error importing world info:', error);
-        toastr.error(t`Failed to import World Info`);
+        toastr.error(String(error?.message || error), t`Failed to import World Info`, { escapeHtml: true });
     }
 }
 

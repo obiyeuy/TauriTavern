@@ -3052,12 +3052,12 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         </span></h4>
                         <select id="chat_completion_source" aria-labelledby="chat_completion_source_label">
                             <optgroup>
-                                <option value="openai">OpenAI</option>
-                                <option value="custom" data-i18n="Custom (OpenAI-compatible)">Custom (OpenAI-compatible)</option>
-                                <option value="custom_openai_responses" data-i18n="Custom (OpenAI Responses)">Custom (OpenAI Responses)</option>
-                                <option value="custom_claude_messages" data-i18n="Custom (Claude Messages)">Custom (Claude Messages)</option>
-                                <option value="custom_gemini_generate_content" data-i18n="Custom (Gemini generateContent)">Custom (Gemini generateContent)</option>
-                                <option value="custom_gemini_interactions" data-i18n="Custom (Gemini Interactions)">Custom (Gemini Interactions)</option>
+                                <option value="openai" title="Connects to the official OpenAI service. For another service's Base URL, choose a Custom protocol." data-i18n="[title]Connects to the official OpenAI service. For another service's Base URL, choose a Custom protocol.">OpenAI</option>
+                                <option value="custom" title="Uses /chat/completions. The usual choice for OpenAI-compatible proxies and local services, including services with Gemini or Claude model names." data-i18n="Custom (OpenAI-compatible);[title]Uses /chat/completions. The usual choice for OpenAI-compatible proxies and local services, including services with Gemini or Claude model names.">Custom (OpenAI-compatible)</option>
+                                <option value="custom_openai_responses" title="Uses /responses. Choose only if your service explicitly supports OpenAI Responses. A working model list does not confirm this protocol." data-i18n="Custom (OpenAI Responses);[title]Uses /responses. Choose only if your service explicitly supports OpenAI Responses. A working model list does not confirm this protocol.">Custom (OpenAI Responses)</option>
+                                <option value="custom_claude_messages" title="Uses Anthropic /messages. Choose only if your API service provides the native Claude Messages protocol." data-i18n="Custom (Claude Messages);[title]Uses Anthropic /messages. Choose only if your API service provides the native Claude Messages protocol.">Custom (Claude Messages)</option>
+                                <option value="custom_gemini_generate_content" title="Uses Gemini /models/...:generateContent. Choose only if your API service provides the native Gemini API." data-i18n="Custom (Gemini generateContent);[title]Uses Gemini /models/...:generateContent. Choose only if your API service provides the native Gemini API.">Custom (Gemini generateContent)</option>
+                                <option value="custom_gemini_interactions" title="Uses /interactions. This differs from Gemini generateContent and requires explicit support from your API service." data-i18n="Custom (Gemini Interactions);[title]Uses /interactions. This differs from Gemini generateContent and requires explicit support from your API service.">Custom (Gemini Interactions)</option>
                             </optgroup>
                             <optgroup>
                                 <option value="ai21">AI21</option>
@@ -3134,7 +3134,6 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                                 <div class="wide100p">
                                     <input id="openai_reverse_proxy" type="text" class="text_pole" placeholder="https://api.openai.com/v1" aria-labelledby="openai_reverse_proxy_label">
                                     <small class="reverse_proxy_warning">
-                                        <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
                                         <span data-i18n="completions note prefix"></span><code>/chat/completions</code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                     </small>
                                 </div>
@@ -4135,14 +4134,14 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         <form id="custom_form" data-source="custom">
                             <h4><span data-i18n="Custom Endpoint (Base URL)" id="custom_api_url_text_label">Custom Endpoint (Base URL)</span></h4>
                             <div class="flex-container">
-                                <input id="custom_api_url_text" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: http://localhost:1234/v1" placeholder="Example: http://localhost:1234/v1" aria-labelledby="custom_api_url_text_label">
+                                <input id="custom_api_url_text" type="url" inputmode="url" autocapitalize="none" spellcheck="false" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: http://localhost:1234/v1" placeholder="Example: http://localhost:1234/v1" aria-labelledby="custom_api_url_text_label" aria-describedby="custom_api_url_text_help">
                             </div>
+                            <p id="custom_api_url_text_help" class="toggle-description justifyLeft wide100p" data-i18n="Enter the service Base URL, for example https://example.com/v1. Keep its version path. Do not append /chat/completions or /models.">Enter the service Base URL, for example https://example.com/v1. Keep its version path. Do not append /chat/completions or /models.</p>
                             <div>
                                 <small>
                                     <span data-i18n="Custom endpoint preview">Custom endpoint preview</span><span>:</span> <code id="custom_endpoint_preview"></code>
                                     <br>
                                     <span id="custom_endpoint_version_hint">
-                                        <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
                                         <span data-i18n="completions note prefix"></span><code id="custom_endpoint_preview_suffix"></code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
                                     </span>
                                     <span id="custom_gemini_endpoint_hint" style="display: none;" data-i18n="custom_gemini_endpoint_hint">Gemini Base URL accepts /v1 or /v1beta; otherwise /v1beta is added. Do not include /models or a generation method.</span>
@@ -4421,7 +4420,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                             <div class="api_loading menu_button menu_button_icon displayNone" data-i18n="Cancel">Cancel</div>
                             <div id="customize_additional_parameters" class="menu_button menu_button_icon" data-i18n="Additional Parameters">Additional Parameters</div>
                             <div data-source="openrouter" class="menu_button menu_button_icon openrouter_authorize" title="Get your OpenRouter API token using OAuth flow. You will be redirected to openrouter.ai" data-i18n="Authorize;[title]Get your OpenRouter API token using OAuth flow. You will be redirected to openrouter.ai">Authorize</div>
-                            <div id="test_api_button" class="menu_button menu_button_icon" title="Verifies your API connection by sending a short test message. Be aware that you'll be credited for it!" data-i18n="Test Message;[title]Verifies your API connection by sending a short test message. Be aware that you'll be credited for it!">Test Message</div>
+                            <button id="test_api_button" type="button" class="menu_button menu_button_icon" title="Verifies your API connection by sending a short test message. Be aware that you'll be credited for it!" data-i18n="Test Message;[title]Verifies your API connection by sending a short test message. Be aware that you'll be credited for it!">Test Message</button>
                         </div>
                         <div class="online_status">
                             <div class="online_status_indicator"></div>
@@ -8523,7 +8522,6 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                 <form id="file_form" class="wide100p displayNone">
                     <div class="file_attached">
                         <input id="file_form_input" type="file" multiple hidden>
-                        <input id="embed_file_input" type="file" multiple hidden>
                         <i class="fa-solid fa-file-alt"></i>
                         <span class="file_name">File Name</span>
                         <span class="file_size">File Size</span>
@@ -8532,6 +8530,7 @@ Using a draft model is preferred. Speculative ngram is not as effective." id="sp
                         </button>
                     </div>
                 </form>
+                <input id="embed_file_input" type="file" multiple hidden>
                 <div id="nonQRFormItems">
                     <div id="leftSendForm" class="alignContentCenter">
                         <div id="options_button" class="fa-solid fa-bars interactable" title="Chat options" data-i18n="[title]Chat options"></div>

@@ -42,6 +42,9 @@ for (const identity of [HOSTS.windows, HOSTS.android]) {
             assert.equal(saved.amount_gen, 80);
             assert.deepEqual(saved.power_user.personas, original.personas);
             assert.deepEqual(saved.power_user.persona_descriptions, original.persona_descriptions);
+            window.jQuery('#custom_api_url_text').val('https://saved.invalid/v1').trigger('input');
+            assert.equal(await main.flushPendingSettingsSave(true), true);
+            assert.equal(readSettings().oai_settings.custom_url, 'https://saved.invalid/v1');
             assert.deepEqual(errors, []);
         } finally {
             await window.happyDOM.close();

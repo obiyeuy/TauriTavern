@@ -1,6 +1,7 @@
 // @ts-check
 
 import { getCurrentWindow } from '../../../../tauri-bridge.js';
+import { isComposingKeyboardEvent } from '../../../../scripts/util/keyboard-event.js';
 
 const installedDocuments = new WeakSet();
 let fullscreenToggle = Promise.resolve();
@@ -93,6 +94,7 @@ export function installDesktopFullscreenShortcut(targetWindow = window) {
     installedDocuments.add(targetDocument);
     targetDocument.addEventListener('keydown', (event) => {
         if (event.key !== 'F11'
+            || isComposingKeyboardEvent(event)
             || event.altKey
             || event.ctrlKey
             || event.metaKey

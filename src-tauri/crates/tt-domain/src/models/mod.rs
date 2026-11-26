@@ -5,6 +5,7 @@ pub mod avatar;
 pub mod background;
 pub mod bedrock_model;
 pub mod character;
+pub mod character_book;
 pub mod chat;
 pub mod chat_completion_source;
 pub mod claude_model;

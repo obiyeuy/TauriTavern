@@ -44,6 +44,10 @@
 
 - third-party 扩展 discovery 可以提前，但 local/global third-party 模块求值不再阻塞 `APP_READY`
 - `APP_READY` 发出后，晚加载的 third-party 扩展仍可依赖 `eventSource` 对 `APP_READY` 的 auto-fire 语义完成 ready 钩子
+- `APP_READY` 的已注册监听器执行完毕后，发布唯一的 deferred activation Promise，并在下一次绘制后立即激活 third-party 扩展；tokenizer 与 scraper 的可选初始化独立运行，不影响这项依赖
+- 角色选择、角色/群组聊天加载和生成入口共同等待该 Promise，保证首次聊天事件发生时扩展已激活；桌面自动恢复聊天也在激活后执行，移动端仍先显示列表与设置
+- Quick Reply 等 `APP_READY` 启动钩子可能等待聊天 API，因此 deferred task 发布前的调用保持原有语义；不能在 `APP_READY` 之前安装一个需要该事件完成才能解决的等待
+- 实际尝试加载的 third-party 模块、样式或声明钩子抛错时，Promise 保留带上下文的失败并阻止后续聊天加载/生成；界面显示错误，列表与设置保持可用，不补发聊天业务事件。缺少 Extras、依赖或客户端版本不符仍按既有规则跳过并警告，不阻断无关聊天
 - `EXTENSION_SETTINGS_LOADED` 在存在待激活 third-party 扩展时会延后到 deferred activation 完成后再发出
 
 ### 2.2 安装、版本、分支与更新

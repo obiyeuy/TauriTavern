@@ -39,6 +39,8 @@ import { createTagMapFromList } from './tags.js';
 import { renderTemplateAsync } from './templates.js';
 import { saveGroupChatPayload } from './chat-payload-transport.js';
 import { t } from './i18n.js';
+import { requireOkResponse } from './util/command-error-utils.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 
 import {
     getUniqueName,
@@ -426,56 +428,49 @@ export async function convertSoloToGroupChat() {
         body: JSON.stringify(groupCreateModel),
     });
 
-    if (!createGroupResponse.ok) {
-        console.error('Group creation unsuccessful');
-        return;
-    }
+    await requireOkResponse(createGroupResponse, 'Create group for chat conversion');
 
     /** @type {Group} */
     const group = await createGroupResponse.json();
 
-    // Convert tags list and assign to group
-    createTagMapFromList('#tagList', group.id);
-
-    // Update chars list
-    await getCharacters();
-
-    // Convert chat to group format
-    const groupChat = [...chat].map(m => structuredClone(m));
-    const genIdFirst = Date.now();
-
-    for (let index = 0; index < groupChat.length; index++) {
-        const message = groupChat[index];
-
-        // Skip messages we don't care about
-        if (message.is_user || message.is_system || message.extra?.type === system_message_types.NARRATOR || message.force_avatar !== undefined) {
-            continue;
-        }
-
-        if (!message.extra || typeof message.extra !== 'object') {
-            message.extra = {};
-        }
-
-        // Set force fields for solo character
-        message.name = character.name;
-        message.original_avatar = character.avatar;
-        message.force_avatar = getThumbnailUrl('avatar', character.avatar);
-        // Allow regens of a single message in group
-        message.extra.gen_id = genIdFirst + index;
-    }
-
-    // Save group chat
     try {
-        await saveGroupChatPayload({ id: chatName, payload: [chatHeader, ...groupChat] });
-    } catch (error) {
-        console.error('Group chat creation unsuccessful', error);
-        toastr.error('Group chat creation unsuccessful');
-        throw error;
-    }
+        // Convert tags list and assign to group
+        createTagMapFromList('#tagList', group.id);
 
-    // Click on the freshly selected group to open it
-    setActiveGroup(group.id);
-    await openGroupById(group.id);
+        // Update chars list
+        await getCharacters();
+
+        // Convert chat to group format
+        const groupChat = [...chat].map(m => structuredClone(m));
+        const genIdFirst = Date.now();
+
+        for (let index = 0; index < groupChat.length; index++) {
+            const message = groupChat[index];
+
+            // Skip messages we don't care about
+            if (message.is_user || message.is_system || message.extra?.type === system_message_types.NARRATOR || message.force_avatar !== undefined) {
+                continue;
+            }
+
+            if (!message.extra || typeof message.extra !== 'object') {
+                message.extra = {};
+            }
+
+            // Set force fields for solo character
+            message.name = character.name;
+            message.original_avatar = character.avatar;
+            message.force_avatar = getThumbnailUrl('avatar', character.avatar);
+            // Allow regens of a single message in group
+            message.extra.gen_id = genIdFirst + index;
+        }
+
+        await saveGroupChatPayload({ id: chatName, payload: [chatHeader, ...groupChat] });
+
+        setActiveGroup(group.id);
+        await openGroupById(group.id);
+    } catch (error) {
+        throw new Error(`${t`Group created, but chat conversion could not be completed`}: ${toUserFacingErrorText(error)}`, { cause: error });
+    }
 
     toastr.success(t`The chat has been successfully converted!`);
 }
@@ -720,7 +715,14 @@ function registerBookmarksSlashCommands() {
 export function initBookmarks() {
     $('#option_new_bookmark').on('click', saveBookmarkMenu);
     $('#option_back_to_main').on('click', backToMainChat);
-    $('#option_convert_to_group').on('click', convertSoloToGroupChat);
+    $('#option_convert_to_group').on('click', async () => {
+        try {
+            await convertSoloToGroupChat();
+        } catch (error) {
+            console.error('Failed to convert chat to group:', error);
+            toastr.error(toUserFacingErrorText(error), t`Could not convert chat to group`);
+        }
+    });
 
     $(document).on('click', '.select_chat_block, .mes_bookmark', async function (e) {
         // If shift is held down, we are not following the bookmark, but creating a new one

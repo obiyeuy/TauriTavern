@@ -390,20 +390,10 @@ export class QuickReplyApi {
         set.disableSend = disableSend ?? false;
         set.placeBeforeInput = placeBeforeInput ?? false;
         set.injectInput = injectInput ?? false;
-        const oldSet = this.getSetByName(name);
-        if (oldSet) {
-            QuickReplySet.list.splice(QuickReplySet.list.indexOf(oldSet), 1, set);
-        } else {
-            const idx = QuickReplySet.list.findIndex(it => it.name.localeCompare(name) == 1);
-            if (idx > -1) {
-                QuickReplySet.list.splice(idx, 0, set);
-            } else {
-                QuickReplySet.list.push(set);
-            }
-        }
-        await set.save();
+        await set.performSave();
+        const published = set.publishSaved();
         this.settingsUi.rerender();
-        return set;
+        return published;
     }
 
     /**
@@ -428,7 +418,7 @@ export class QuickReplyApi {
         set.disableSend = disableSend ?? false;
         set.placeBeforeInput = placeBeforeInput ?? false;
         set.injectInput = injectInput ?? false;
-        await set.save();
+        await set.performSave();
         this.settingsUi.rerender();
         return set;
     }

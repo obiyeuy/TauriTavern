@@ -1,5 +1,6 @@
 import * as drawers from '../../../drawers.js';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, rstest as vi } from '@rstest/core';
 import { modelBindingFromTarget } from '../../../tauritavern/agent/model-target-llm-connection.js';
 import { AssistantApp } from './AssistantApp';
@@ -80,15 +81,32 @@ test('IME and modified Enter never send to character chat; switching formatting 
     document.removeEventListener('keydown', globalKey); drawer.dispose();
 });
 
-test('Escape closes the composer menu before the drawer', () => {
+test('composer menus leave IME keys alone and consume ordinary Escape before the drawer', () => {
     document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
     const drawer = installAssistantDrawer(drawers);
     const close = vi.spyOn(drawer, 'close');
     const h = harness();
     render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
     const trigger = screen.getByRole('button', { name: 'Model: Test model' });
-    fireEvent.click(trigger);
+    trigger.focus();
+    for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+        fireEvent.keyDown(trigger, { key: 'ArrowDown', ...flags });
+        expect(screen.queryByRole('menu')).toBeNull();
+        expect(document.activeElement === trigger).toBe(true);
+    }
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     const menu = screen.getByRole('menu', { name: 'Model' });
+    const selected = document.activeElement;
+    for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+        for (const key of ['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape', 'Tab']) {
+            fireEvent.keyDown(menu, { key, ...flags });
+            expect(screen.queryByRole('menu')).toBe(menu);
+            expect(document.activeElement === selected).toBe(true);
+            expect(close).not.toHaveBeenCalled();
+        }
+    }
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement === selected).toBe(false);
     fireEvent.keyDown(menu, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
     expect(close).not.toHaveBeenCalled();
@@ -96,6 +114,52 @@ test('Escape closes the composer menu before the drawer', () => {
     fireEvent.keyDown(trigger, { key: 'Escape' });
     expect(close).toHaveBeenCalledTimes(1);
     drawer.dispose();
+});
+
+test('history keeps its menu and rename draft during IME Escape, then accepts ordinary cancellation and confirmation', async () => {
+    document.body.innerHTML = '<div id="advanced-formatting-button" class="drawer"><div class="drawer-toggle"><div class="drawer-icon"></div></div><div id="AdvancedFormatting" class="drawer-content openDrawer"></div></div>';
+    const drawer = installAssistantDrawer(drawers);
+    const h = harness();
+    h.controller.renameSession = (id, title) => {
+        h.publish({ sessions: h.snapshot.sessions.map(session => session.id === id ? { ...session, title } : session) });
+        return Promise.resolve();
+    };
+    try {
+        render(<AssistantApp controller={h.controller} actions={h.actions} drawer={drawer} />, { container: drawer.mount });
+        fireEvent.click(screen.getByRole('button', { name: 'Conversation history' }));
+        let trigger = screen.getByRole('button', { name: 'Actions for Test conversation' });
+        fireEvent.click(trigger);
+        fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+        let title = screen.getByRole<HTMLInputElement>('textbox', { name: 'Conversation title' });
+        fireEvent.change(title, { target: { value: '尚未确认的标题' } });
+        for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+            fireEvent.keyDown(title, { key: 'Escape', ...flags });
+            expect(screen.queryByRole('textbox', { name: 'Conversation title' })).toBe(title);
+            expect(title.value).toBe('尚未确认的标题');
+        }
+        fireEvent.keyDown(title, { key: 'Escape' });
+        expect(screen.queryByRole('textbox', { name: 'Conversation title' })).toBeNull();
+        expect(screen.getByText('Test conversation')).toBeTruthy();
+        trigger = screen.getByRole('button', { name: 'Actions for Test conversation' });
+        fireEvent.click(trigger);
+        const rename = screen.getByRole('button', { name: 'Rename' });
+        for (const flags of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+            fireEvent.keyDown(rename, { key: 'Escape', ...flags });
+            expect(screen.queryByRole('button', { name: 'Rename' })).toBe(rename);
+        }
+        fireEvent.keyDown(rename, { key: 'Escape' });
+        expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull();
+        expect(document.activeElement === trigger).toBe(true);
+        fireEvent.click(trigger);
+        fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+        title = screen.getByRole<HTMLInputElement>('textbox', { name: 'Conversation title' });
+        fireEvent.change(title, { target: { value: '确认后的标题' } });
+        await userEvent.setup().keyboard('{Enter}');
+        await screen.findByText('确认后的标题');
+        expect(screen.queryByRole('textbox', { name: 'Conversation title' })).toBeNull();
+    } finally {
+        drawer.dispose();
+    }
 });
 
 test('reasoning precedes the answer and stays expanded when history replaces the live preview', () => {

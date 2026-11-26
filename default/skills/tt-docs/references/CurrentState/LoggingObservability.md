@@ -17,8 +17,8 @@ Rust 普通日志统一使用 `tracing::{debug, info, warn, error}` 宏，不再
 
 backend error toast 不是普通 error 日志的副作用，而是显式产品事件：
 
-- command boundary 失败通过 `presentation/commands/helpers.rs::map_command_error()` 统一记录；
-- `Cancelled` / `TooManyRequests` 等预期失败只记录 command warn，不触发 toast；
+- command boundary 失败通过 `presentation/commands/helpers.rs::map_command_error()` 映射为原有 `CommandError` 并记录 command 诊断，错误通过 Result 返回，由调用者负责呈现，不额外广播 backend error toast；
+- `Cancelled` / `TooManyRequests` / `Conflict` 等预期失败记录 command warn，其他返回失败记录 command error；
 - 无法通过 `Result` 自然返回、但用户应立即感知的重要后台/宿主失败，显式使用 user-visible error target；host crate 使用 `target: crate::observability_targets::USER_VISIBLE_ERROR`，adapter crate 使用 `target: tt_contracts::observability::USER_VISIBLE_ERROR`；
 - 普通诊断 `tracing::error!` 只进入 stdout/file/backend log，不自动弹窗。
 
@@ -39,6 +39,10 @@ user-error layer 将消息交给 `app/backend_errors.rs::BackendErrorHub`。前�
 Dev Observability 通过 `app/dev_observability.rs::DevObservabilityHub` 暴露给 presentation commands。`dev_logging_commands.rs` 和 `settings_commands.rs` 不直接接触 `infrastructure::logging::*` store。
 
 LLM API logs 由 infrastructure decorator `LoggingChatCompletionRepository` 记录 raw/readable 请求响应。JSON 请求及非流式 JSON 响应写入前会移除内部 provider state，并把 base64 data URL，以及同一对象内同时带非空字符串 `data` 和媒体类型（`media_type`、`mime_type` 或 `mimeType`）的内联媒体，替换为只含 MIME 与编码长度的占位符；脱敏只作用于日志副本，不修改出站 payload。持久化失败是诊断日志，不触发 backend error toast。
+
+共同 chat-completion JSON reader 在成功 HTTP 响应中发现 provider `error` 或 `/detail/error` 时，记录普通 warn，包含 provider、operation、实际 status、content_type、body_len 和返回给调用者的领域错误。诊断只增加 HTTP 元数据，不另行保存 JSON 正文、原 error 对象或额外响应预览；已有错误消息选择、上下文超限分类和 Result 保持。HTTP 元数据位于普通日志，LLM API log decorator 仍只观测 repository 的结果。
+
+共同 SSE reader 在正常 EOF 没有分发过非空 payload 时返回 Transient 并记录普通 warn，包含 provider、operation、status、content_type、已读 body_len、脱敏 endpoint 与原错误。SSE body-read 失败也记录这些已知 HTTP 元数据，并保持既有 network failure 分类。两条诊断均不额外保存响应内容；已就绪的取消信号在共用流读取入口优先结束，包括取消与空响应 EOF 同时就绪的情况，不记录零 payload 失败。有效数据照常逐段分发。
 
 ## 5. 持续开发守卫
 

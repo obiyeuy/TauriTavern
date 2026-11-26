@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use serde_json::value::RawValue;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -149,10 +148,9 @@ impl WorldInfoRepository for FileWorldInfoRepository {
                     )));
                 }
             };
-            serde_json::from_slice::<&RawValue>(&bytes).map_err(|error| {
+            document::normalize(bytes).map(Some).map_err(|error| {
                 DomainError::InvalidData(format!("World info {}: {error}", path.display()))
-            })?;
-            Ok(Some(bytes))
+            })
         })
         .await
         .map_err(|error| {
@@ -287,6 +285,135 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(self.path.parent().expect("test root"));
         }
+    }
+
+    #[tokio::test]
+    async fn character_book_world_files_share_canonical_read_import_and_commit_semantics() {
+        let dir = TestDir::new();
+        let repository =
+            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
+        let original = json!({
+            "name": "Initialization",
+            "description": "Keep this metadata",
+            "futureBookField": { "version": 3 },
+            "entries": [{
+                "id": 42,
+                "keys": ["init"],
+                "content": "Initialize the state",
+                "constant": true,
+                "enabled": true,
+                "insertion_order": 100,
+                "futureEntryField": { "value": "keep" },
+                "extensions": { "custom": true }
+            }]
+        });
+        let bytes = serde_json::to_vec(&original).unwrap();
+        let source = dir.path().join("Existing.json");
+        std::fs::write(&source, &bytes).unwrap();
+        let existing = repository
+            .get_world_info("Existing")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(existing.pointer("/entries/42/key"), Some(&json!(["init"])));
+        assert_eq!(existing.pointer("/entries/42/disable"), Some(&json!(false)));
+        assert_eq!(existing.pointer("/entries/42/constant"), Some(&json!(true)));
+        assert_eq!(existing.get("originalData"), Some(&original));
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            bytes,
+            "reading must not rewrite the old file"
+        );
+
+        repository
+            .import_world_info(&source, "Imported.json", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_world_info("Imported").await.unwrap(),
+            Some(existing.clone())
+        );
+        let request =
+            serde_json::to_vec(&json!({ "name": "Committed", "data": original })).unwrap();
+        let session = repository.begin_commit().await.unwrap();
+        repository
+            .append_commit(&session.session_id, 0, &request)
+            .await
+            .unwrap();
+        repository
+            .finish_commit(&session.session_id, request.len() as u64)
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_world_info("Committed").await.unwrap(),
+            Some(existing)
+        );
+    }
+
+    #[tokio::test]
+    async fn character_book_validation_preserves_existing_worlds_on_unknown_array_shapes() {
+        let dir = TestDir::new();
+        let repository =
+            FileWorldInfoRepository::new(dir.path().to_path_buf(), Arc::default(), 4 * 1024 * 1024);
+        let path = dir.path().join("Existing.json");
+        let original = br#"{"entries":{"42":{"uid":42,"key":["init"],"content":"Original","disable":false,"order":100}}}"#;
+        std::fs::write(&path, original).unwrap();
+        let valid_entry = json!({
+            "keys": ["init"], "content": "Initialize", "enabled": true
+        });
+        let mut invalid_entries = vec![(
+            json!({"uid":42,"key":["init"],"content":"Initialize","disable":false,"order":100}),
+            "keys",
+        )];
+        for (field, value) in [
+            ("keys", json!(["init", 42])),
+            ("content", json!(null)),
+            ("enabled", json!("true")),
+            ("id", json!("42")),
+            ("insertion_order", json!("100")),
+        ] {
+            let mut entry = valid_entry.clone();
+            entry[field] = value;
+            invalid_entries.push((entry, field));
+        }
+        for (entry, field) in invalid_entries {
+            let data = json!({ "entries": [entry] }).to_string();
+            let error = repository
+                .import_world_info(Path::new("unused"), "Existing.json", Some(&data))
+                .await
+                .expect_err("unknown or mistyped arrays must not be converted");
+            assert!(matches!(
+                error,
+                tt_domain::errors::DomainError::InvalidData(_)
+            ));
+            let message = error.to_string();
+            assert!(message.contains("entry 0"), "{message}");
+            assert!(message.contains(field), "{message}");
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+
+        // Older CharacterBook exports may omit numbering and ordering.
+        let data = json!({ "entries": [valid_entry] }).to_string();
+        repository
+            .import_world_info(Path::new("unused"), "Optional.json", Some(&data))
+            .await
+            .unwrap();
+        let optional = repository
+            .get_world_info("Optional")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(optional.pointer("/entries/0/key"), Some(&json!(["init"])));
+        assert_eq!(optional.pointer("/entries/0/disable"), Some(&json!(false)));
+        assert_eq!(optional.pointer("/entries/0/order"), Some(&json!(100)));
+        repository
+            .import_world_info(Path::new("unused"), "Empty.json", Some(r#"{"entries":[]}"#))
+            .await
+            .unwrap();
+        assert_eq!(
+            repository.get_world_info("Empty").await.unwrap().unwrap()["entries"],
+            json!({})
+        );
     }
 
     #[tokio::test]

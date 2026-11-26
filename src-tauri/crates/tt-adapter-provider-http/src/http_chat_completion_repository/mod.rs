@@ -3,13 +3,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, RequestBuilder, StatusCode, Url};
 use serde_json::Value;
 
 use tt_adapter_http::{HttpClientPool, HttpClientProfile};
 use tt_domain::errors::DomainError;
 use tt_domain::models::endpoint_url::append_endpoint_path;
+use tt_domain::models::upstream_failure::UpstreamFailure;
 use tt_ports::repositories::chat_completion_repository::{
     ChatCompletionApiConfig, ChatCompletionCancelReceiver, ChatCompletionRepository,
     ChatCompletionRepositoryGenerateResponse, ChatCompletionSource, ChatCompletionStreamDelta,
@@ -30,6 +31,8 @@ mod openai;
 mod openai_responses;
 mod pollinations;
 mod response_body;
+#[cfg(test)]
+mod test_support;
 mod vertexai;
 pub(crate) mod vertexai_auth;
 mod workers_ai;
@@ -50,6 +53,7 @@ pub struct HttpChatCompletionRepository {
 #[derive(Default)]
 struct SseEventAccumulator {
     data: Vec<u8>,
+    dispatched_payload: bool,
 }
 
 impl SseEventAccumulator {
@@ -93,7 +97,9 @@ impl SseEventAccumulator {
         }
 
         let payload = std::mem::take(&mut self.data);
-        on_event(payload.as_slice())
+        on_event(payload.as_slice())?;
+        self.dispatched_payload = true;
+        Ok(())
     }
 }
 
@@ -273,8 +279,15 @@ impl HttpChatCompletionRepository {
         default_message: &str,
     ) -> DomainError {
         let status = response.status();
+        let endpoint = crate::http_error::sanitize_endpoint(response.url());
         let body = response.text().await.unwrap_or_default();
-        Self::map_error_status(provider_name, status, &body, default_message)
+        Self::map_error_status(
+            provider_name,
+            status,
+            &body,
+            default_message,
+            Some(endpoint),
+        )
     }
 
     fn map_error_status(
@@ -282,6 +295,7 @@ impl HttpChatCompletionRepository {
         status: StatusCode,
         body: &str,
         default_message: &str,
+        endpoint: Option<String>,
     ) -> DomainError {
         let body = body.trim();
         let parsed = serde_json::from_str::<Value>(body).ok();
@@ -324,6 +338,9 @@ impl HttpChatCompletionRepository {
         };
 
         match status {
+            StatusCode::NOT_FOUND => {
+                DomainError::upstream_failure(UpstreamFailure::http_not_found(endpoint, message))
+            }
             StatusCode::PAYLOAD_TOO_LARGE => context_overflow::context_overflow_error(message),
             StatusCode::BAD_REQUEST => {
                 let error = error.map_or_else(|| body.to_owned(), Value::to_string);
@@ -380,8 +397,10 @@ impl HttpChatCompletionRepository {
         tokio::pin!(consume);
 
         tokio::select! {
-            result = &mut consume => result,
+            // Cancellation may already be ready when the HTTP response arrives.
+            biased;
             Ok(_) = cancel.wait_for(|cancelled| *cancelled) => Ok(()),
+            result = &mut consume => result,
         }
     }
 
@@ -438,6 +457,14 @@ impl HttpChatCompletionRepository {
         let mut buffer = Vec::<u8>::new();
         let mut accumulator = SseEventAccumulator::default();
         let endpoint = response.url().clone();
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
+        let mut body_len = 0_usize;
 
         loop {
             let chunk = response.chunk().await.map_err(|error| {
@@ -445,6 +472,9 @@ impl HttpChatCompletionRepository {
                 tracing::warn!(
                     provider = provider_name,
                     operation = "stream",
+                    status = status.as_u16(),
+                    content_type = content_type,
+                    body_len,
                     code = %failure.code,
                     category = %failure.category,
                     endpoint = failure.endpoint.as_deref().unwrap_or(""),
@@ -461,6 +491,7 @@ impl HttpChatCompletionRepository {
                 break;
             };
 
+            body_len += chunk.len();
             buffer.extend_from_slice(&chunk);
             Self::forward_sse_events(&mut buffer, &mut accumulator, &mut on_event)?;
         }
@@ -472,6 +503,23 @@ impl HttpChatCompletionRepository {
         }
 
         accumulator.finish(&mut on_event)?;
+        if !accumulator.dispatched_payload {
+            let failure = DomainError::transient(format!(
+                "model.upstream_invalid_response: {provider_name} returned status {} without SSE data (stream)",
+                status.as_u16()
+            ));
+            tracing::warn!(
+                provider = provider_name,
+                operation = "stream",
+                status = status.as_u16(),
+                content_type = content_type,
+                body_len,
+                endpoint = %crate::http_error::sanitize_endpoint(&endpoint),
+                error = %failure,
+                "upstream stream ended without a data payload",
+            );
+            return Err(failure);
+        }
         Ok(())
     }
 
@@ -1014,16 +1062,380 @@ impl ChatCompletionRepository for HttpChatCompletionRepository {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     use reqwest::Client;
     use reqwest::header::AUTHORIZATION;
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::{mpsc, oneshot, watch};
+    use tracing::instrument::WithSubscriber;
 
+    use tt_adapter_http::HttpClientPool;
     use tt_domain::errors::DomainError;
     use tt_ports::repositories::chat_completion_repository::{
-        ChatCompletionApiConfig, ChatCompletionSource,
+        ChatCompletionApiConfig, ChatCompletionRepository, ChatCompletionSource,
     };
+    use tt_ports::user_endpoint_access::UserEndpointGrantRuntime;
 
+    use super::test_support::CaptureDiagnostics;
     use super::{HttpChatCompletionRepository, provider_transport_source};
+
+    async fn read_http_request(socket: &mut BufReader<TcpStream>) {
+        let mut content_length = 0;
+        loop {
+            let mut line = String::new();
+            assert_ne!(socket.read_line(&mut line).await.unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':')
+                && name.eq_ignore_ascii_case("content-length")
+            {
+                content_length = value.trim().parse().unwrap();
+            }
+        }
+        socket
+            .read_exact(&mut vec![0; content_length])
+            .await
+            .unwrap();
+    }
+
+    async fn start_stream_response(
+        content_type: &str,
+        chunks: Vec<Vec<u8>>,
+        finish: Option<oneshot::Receiver<bool>>,
+        reported_length: Option<usize>,
+    ) -> (String, oneshot::Receiver<()>, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let (header_sent, header_ready) = oneshot::channel();
+        let framing = reported_length.map_or_else(
+            || "Transfer-Encoding: chunked".to_owned(),
+            |length| format!("Content-Length: {length}"),
+        );
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\n{framing}\r\nConnection: close\r\n\r\n"
+        );
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = BufReader::new(socket);
+            read_http_request(&mut socket).await;
+            let socket = socket.get_mut();
+            socket.write_all(headers.as_bytes()).await.unwrap();
+            let _ = header_sent.send(());
+            for chunk in chunks {
+                if reported_length.is_none() {
+                    socket
+                        .write_all(format!("{:x}\r\n", chunk.len()).as_bytes())
+                        .await
+                        .unwrap();
+                }
+                socket.write_all(&chunk).await.unwrap();
+                if reported_length.is_none() {
+                    socket.write_all(b"\r\n").await.unwrap();
+                }
+            }
+            let complete = match finish {
+                Some(finish) => finish.await.unwrap(),
+                None => true,
+            };
+            if reported_length.is_none() && complete {
+                socket.write_all(b"0\r\n\r\n").await.unwrap();
+            }
+        });
+        (base_url, header_ready, server)
+    }
+
+    fn stream_test_config(base_url: String) -> ChatCompletionApiConfig {
+        ChatCompletionApiConfig {
+            base_url,
+            user_configured_endpoint: true,
+            api_key: String::new(),
+            authorization_header: None,
+            vertexai_service_account_json: None,
+            extra_headers: HashMap::new(),
+            additional_headers: HashMap::new(),
+            anthropic_beta_header_mode:
+                tt_ports::repositories::chat_completion_repository::AnthropicBetaHeaderMode::None,
+            aws_bedrock_custom_response_path: None,
+            aws_bedrock_custom_stream_path: None,
+        }
+    }
+
+    fn stream_test_repository(base_url: &str) -> HttpChatCompletionRepository {
+        let pool = Arc::new(HttpClientPool::new("sse-test"));
+        let grant = tt_domain::models::endpoint_url::parse_user_http_endpoint(base_url)
+            .unwrap()
+            .to_string();
+        pool.replace_user_endpoint_grants(&[grant]);
+        HttpChatCompletionRepository::new(pool)
+    }
+
+    #[tokio::test]
+    async fn sse_generation_rejects_responses_without_payload() {
+        let mut accepted_without_payload = Vec::new();
+        for (content_type, body) in [
+            (
+                "application/json",
+                r#"{"error":{"message":"no output","extra":"PRIVATE-STREAM-BODY"}}"#,
+            ),
+            (
+                "application/json",
+                "{\n\"error\": {\"message\": \"no output\"}\n}",
+            ),
+            ("text/event-stream", ""),
+            ("text/html", "<html>PRIVATE-STREAM-BODY</html>"),
+            (
+                "text/event-stream",
+                ": keepalive\n\nevent: message\nid: 7\n\n",
+            ),
+        ] {
+            let chunks = if body.is_empty() {
+                vec![]
+            } else {
+                vec![body.as_bytes().to_vec()]
+            };
+            let (base_url, _header, server) =
+                start_stream_response(content_type, chunks, None, None).await;
+            let expected_endpoint = format!("{base_url}/chat/completions");
+            let repository = stream_test_repository(&base_url);
+            let (sender, mut receiver) = mpsc::unbounded_channel();
+            let (_cancel, cancel) = watch::channel(false);
+            let capture = CaptureDiagnostics::default();
+            let result = repository
+                .generate_stream(
+                    ChatCompletionSource::Custom,
+                    &stream_test_config(base_url),
+                    "/chat/completions?secret=PRIVATE-QUERY",
+                    &serde_json::json!({"model":"probe","stream":true}),
+                    sender,
+                    cancel,
+                )
+                .with_subscriber(tracing::Dispatch::new(capture.clone()))
+                .await;
+            assert!(
+                receiver.recv().await.is_none(),
+                "an invalid stream must not produce payload"
+            );
+            let error = match result {
+                Err(error) => error,
+                Ok(()) => {
+                    server.await.unwrap();
+                    accepted_without_payload.push((content_type, body.len()));
+                    continue;
+                }
+            };
+            assert!(
+                matches!(&error, DomainError::Transient(reason) if reason.starts_with("model.upstream_invalid_response:"))
+            );
+            server.await.unwrap();
+            let events = capture.events.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].level, tracing::Level::WARN);
+            let fields = &events[0].fields;
+            assert_eq!(fields["provider"], "Custom OpenAI");
+            assert_eq!(fields["operation"], "stream");
+            assert_eq!(fields["status"], 200);
+            assert_eq!(fields["content_type"], content_type);
+            assert_eq!(fields["body_len"], body.len() as u64);
+            assert_eq!(fields["endpoint"], expected_endpoint);
+            let recorded = serde_json::to_string(fields).unwrap();
+            assert!(!recorded.contains("PRIVATE-STREAM-BODY"));
+            assert!(!recorded.contains("PRIVATE-QUERY"));
+        }
+        assert!(
+            accepted_without_payload.is_empty(),
+            "responses without SSE payload were reported successful: {accepted_without_payload:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sse_generation_streams_before_eof_and_preserves_tail() {
+        let body = "{\"unknown\":\"field\"}\n: keepalive\r\nevent: message\r\ndata: first你\r\ndata: second\r\n\r\ndata: tail";
+        let chunks = body.as_bytes().chunks(2).map(<[u8]>::to_vec).collect();
+        let (finish, gate) = oneshot::channel();
+        let (base_url, _header, server) =
+            start_stream_response("application/json", chunks, Some(gate), None).await;
+        let repository = stream_test_repository(&base_url);
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (_cancel, cancel) = watch::channel(false);
+        let generation = tokio::spawn(async move {
+            repository
+                .generate_stream(
+                    ChatCompletionSource::Custom,
+                    &stream_test_config(base_url),
+                    "/chat/completions",
+                    &serde_json::json!({"model":"probe","stream":true}),
+                    sender,
+                    cancel,
+                )
+                .await
+        });
+        let first = receiver.recv().await;
+        if first.is_none() {
+            panic!(
+                "generation ended before its first payload: {:?}",
+                generation.await.unwrap()
+            );
+        }
+        assert_eq!(first.as_deref(), Some("first你\nsecond"));
+        finish.send(true).unwrap();
+        assert_eq!(receiver.recv().await.as_deref(), Some("tail"));
+        assert!(generation.await.unwrap().is_ok());
+        assert!(receiver.recv().await.is_none());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sse_generation_cancellation_and_body_failures_keep_their_meaning() {
+        for endpoint_path in ["/chat/completions", "/responses", "/interactions"] {
+            let (base_url, _header, server) =
+                start_stream_response("text/event-stream", vec![], None, Some(0)).await;
+            let repository = stream_test_repository(&base_url);
+            let (sender, mut receiver) = mpsc::unbounded_channel();
+            let (cancel, signal) = watch::channel(false);
+            let capture = CaptureDiagnostics::default();
+            // Cancellation predates the HTTP headers; Content-Length: 0 makes
+            // EOF ready as soon as the response reaches the shared reader.
+            cancel.send(true).unwrap();
+            let result = repository
+                .generate_stream(
+                    ChatCompletionSource::Custom,
+                    &stream_test_config(base_url),
+                    endpoint_path,
+                    &serde_json::json!({"model":"probe","stream":true}),
+                    sender,
+                    signal,
+                )
+                .with_subscriber(tracing::Dispatch::new(capture.clone()))
+                .await;
+            assert!(
+                result.is_ok(),
+                "an already cancelled {endpoint_path} must not fail at empty EOF: {result:?}"
+            );
+            assert!(receiver.recv().await.is_none());
+            assert!(capture.events.lock().unwrap().is_empty());
+            server.await.unwrap();
+        }
+
+        let (finish, gate) = oneshot::channel();
+        let (base_url, header, server) =
+            start_stream_response("text/event-stream", vec![], Some(gate), None).await;
+        let repository = stream_test_repository(&base_url);
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (cancel, signal) = watch::channel(false);
+        let capture = CaptureDiagnostics::default();
+        let mut generation = tokio::spawn({
+            let capture = capture.clone();
+            async move {
+                repository
+                    .generate_stream(
+                        ChatCompletionSource::Custom,
+                        &stream_test_config(base_url),
+                        "/chat/completions",
+                        &serde_json::json!({"model":"probe","stream":true}),
+                        sender,
+                        signal,
+                    )
+                    .with_subscriber(tracing::Dispatch::new(capture))
+                    .await
+            }
+        });
+        tokio::select! {
+            result = &mut generation => {
+                panic!("generation ended before HTTP headers: {:?}", result.unwrap());
+            }
+            ready = header => ready.unwrap(),
+        }
+        cancel.send(true).unwrap();
+        assert!(generation.await.unwrap().is_ok());
+        assert!(receiver.recv().await.is_none());
+        assert!(capture.events.lock().unwrap().is_empty());
+        finish.send(false).unwrap();
+        server.await.unwrap();
+
+        let body = b"data: partial\n\n";
+        let (base_url, _header, server) = start_stream_response(
+            "text/event-stream",
+            vec![body.to_vec()],
+            None,
+            Some(body.len() + 8),
+        )
+        .await;
+        let repository = stream_test_repository(&base_url);
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (_cancel, signal) = watch::channel(false);
+        let capture = CaptureDiagnostics::default();
+        let result = repository
+            .generate_stream(
+                ChatCompletionSource::Custom,
+                &stream_test_config(base_url),
+                "/chat/completions",
+                &serde_json::json!({"model":"probe","stream":true}),
+                sender,
+                signal,
+            )
+            .with_subscriber(tracing::Dispatch::new(capture.clone()))
+            .await;
+        let DomainError::UpstreamFailure(failure) = result.unwrap_err() else {
+            panic!("a truncated HTTP body must preserve the network failure");
+        };
+        assert_eq!(failure.code, "network.body_interrupted");
+        server.await.unwrap();
+        assert_eq!(receiver.recv().await.as_deref(), Some("partial"));
+        let events = capture.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].fields["status"], 200);
+        assert_eq!(events[0].fields["code"], "network.body_interrupted");
+    }
+
+    #[tokio::test]
+    async fn upstream_404_preserves_the_failed_endpoint_and_service_message() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1/responses", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = BufReader::new(socket);
+            read_http_request(&mut socket).await;
+            let body = r#"{"error":{"message":"This API does not provide /responses"}}"#;
+            socket
+                .get_mut()
+                .write_all(
+                    format!(
+                        "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let request = Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(format!("{endpoint}?key=TEST-ONLY"));
+        let error = HttpChatCompletionRepository::send_checked(
+            request,
+            "Custom OpenAI Responses",
+            "Generation request failed",
+        )
+        .await
+        .expect_err("an unavailable API endpoint must fail");
+        server.await.unwrap();
+
+        let DomainError::UpstreamFailure(failure) = error else {
+            panic!("HTTP 404 must carry the upstream endpoint: {error}");
+        };
+        let details = serde_json::to_value(failure).unwrap();
+        assert_eq!(details["code"], "http.not_found");
+        assert_eq!(details["endpoint"], endpoint);
+        assert_eq!(
+            details["provider_message"],
+            "This API does not provide /responses"
+        );
+    }
 
     #[test]
     fn opencode_routes_by_wire_format() {
@@ -1181,6 +1593,7 @@ mod tests {
                 reqwest::StatusCode::from_u16(status).unwrap(),
                 body,
                 "Generation request failed",
+                None,
             );
             assert_eq!(
                 matches!(&error, DomainError::InvalidData(message) if message.starts_with("model.context_overflow:")),

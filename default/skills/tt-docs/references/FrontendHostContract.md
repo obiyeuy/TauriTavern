@@ -107,6 +107,22 @@
 
 ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`、`rotateSecret`、`renameSecret` 在请求或随后的状态刷新失败时拒绝 Promise，本身不弹通知，由调用者处理并通知。`writeSecret` 写入成功而刷新失败时密钥已经保存，不应因此重写；未指定 `allowEmpty` 时传入空值等同删除。
 
+同模块的 `findSecret(key, id?)` 成功返回字符串，曝光权限拒绝返回 null；其他 HTTP、传输、JSON 或值格式失败拒绝 Promise，本身不弹通知。读取不触发密钥元数据刷新。原复制按钮报告读取或剪贴板错误；`/secret-read` 及 `/secret-find`、`/secret-get` 的失败空字符串和 quiet 抑制通知行为保持。
+
+原生密钥输入在提交 `change` 时保存；同一 provider 的多个输入共用一份草稿，清空编辑器表示保留已隐藏的密钥，删除仍走明确的密钥管理操作。`data-secret-saved` 由 active 密钥元数据派生，不读取明文。`flushPendingSecretWrites()` 是显式保存与生命周期退出的共同等待入口，覆盖写入、切换、删除和重命名，失败继续向调用方传播；相同在途写入复用结果，新草稿不被旧确认清空。Vertex 服务账号 JSON 先通过同一份 `validateVertexAIServiceAccount()` 校验再保存，不走普通密钥自动保存。
+
+并发密钥读取只由最新读取发布元数据，较早调用等待较新的结果，不能覆盖已完成的保存确认。设置保存只捕获当前已应用的状态；全局世界书选择在共同序列化入口投影，显式保存、生命周期和 debounce 使用相同规则。
+
+Chat Completion 预设的 BEFORE 事件编辑待选 catalogue，当前生效的名称和参数保持一致；BEFORE 完成后复制并一起应用名称与字段，再发送 AFTER 和 PRESET_CHANGED。预设保存本身不提前激活名称；BEFORE 的 `savePreset` 接收序列化预设，UI 保存 live settings 时先统一转换，旧 PromptManager 迁移返回实际保存 Promise。`PresetManager.selectPreset()` 和手机选择确认等待完整原生操作；事件订阅者可以等待设置保存，不会反过来等待自己所在的通知。`read/writePresetExtensionField()` 的默认目标仍是选中的预设，只有实际生效的预设读写 live settings。
+
+Connection Manager 的 `/profile await=true` 等待自己的实际应用操作，字段失败时拒绝；`await=false` 仍及时返回请求的名称，后台失败由界面提示。`CONNECTION_PROFILE_LOADED`／`MODEL_TARGET_LOADED` 的原名称与字符串参数保持，应用失败或被新的选择／None／捕获／删除取代时不发布旧成功。`/profile <None>` 不等待旧写入，立即完成空选择；后续真实应用仍等待原重放队列。原允许空字段、prompt-post-processing 的 none 成功空结果、CC 的第二次 API、未找到配置和连接 timeout 规则保持；`/secret-id` 的 quiet 与失败空字符串契约不变，`/api` 的无效输入遵守 quiet、保留失败空字符串及默认错误提示。选择引用表示用户选择，字段和独立保存不构成跨设置事务。
+
+内部 managed 调用的 `/custom-api-format`（含 OpenCode）、`/proxy` 和 `/tokenizer` 验证失败遵守已有 quiet，由应用发起者呈现。公开参数列表未扩大，普通命令的默认 error／warning、空失败、getter、合法 setter 和匹配规则保持。
+
+ESM `script.js` 的 `getExtensionPrompt()` 保持位置参数及可选请求 evaluator，`getExtensionPromptByName()` 保持按名查询。`setExtensionPrompt(..., filter)` 接受同步或异步条件；分组查询只对所选位置/深度/角色的非空提示词执行条件，false 排除，拒绝向调用者传播。`prompt.filter()` 保留 receiver，返回后读取它修改的 value。CC 相对及深度提示词、按名与 frozen Run capture 共享此条件规则，各入口保留自身的选择和捕获时机。真实聊天深度条件在主提示词宏后执行；有效的同名 ABSOLUTE/ATTACH marker 保留对内容角色、深度和附加方式的覆盖，由该位置单独承载内容。frozen capture 仍在原捕获点求值，同步 outlet 不调用 async 条件。具体数据链路见 [FrontendGuide §6.6](FrontendGuide.md#66-条件扩展提示词)。
+
+`getExtensionPromptMaxDepth()` 仍返回支持上限 10000。内部遍历从实际 source 和 PromptManager 深度选择候选，每个实际深度后重读 source；原深度/角色 wildcard、顺序、条件时机和插入位置保持。详见 [FrontendGuide §6.7](FrontendGuide.md#67-注入深度遍历)。
+
 ### 3.6 平台 ABI（Public，新）
 
 为避免未来继续扩散 `window.__TAURITAVERN_*` 零散符号，宿主层额外提供一个**统一出口**：
@@ -254,7 +270,11 @@ ESM `/scripts/secrets.js` 的 `writeSecret`、`deleteSecret`、`readSecretState`
 
 启用[历史滑动按需加载](CurrentState/ChatPayload.md#21-历史滑动按需加载)时，`getContext().chat` 的历史候选槽位允许为 null；兼容 get、导出与保存文件保持完整。
 
-世界书 get/edit 直接读写磁盘，保留未知字段和键顺序，不合并编辑缓存；get 缺失文件返回空 `entries`。`WORLDINFO_UPDATED` 仅在保存成功后发送；读取或保存失败阻止依赖该世界书的生成。
+世界书 get/edit 直接读写磁盘，普通对象格式保留未知字段、键顺序和原始字节，不合并编辑缓存；CharacterBook 数组格式按[角色世界书](CurrentState/CharacterIdentityContract.md#10-角色世界书)统一转换，旧文件读取不改写，完整原始结构保存在 `originalData`。get 缺失文件返回空 `entries`。`WORLDINFO_UPDATED` 仅在保存成功后发送；读取或保存失败阻止依赖该世界书的生成。
+
+世界书覆盖导入保留现有精确名称及其绑定，包括大小写和重音匹配；校验和原子发布成功前不删除旧书。成功后刷新工作文档和编辑器缓存，失败保留原有内容并报告原因。
+
+Chat Completion 的模型列表检查仅确认模型列表可访问；聊天接口由“测试消息”使用原有临时长度机制验证。上游 HTTP 404 沿共同错误链路保留 `http.not_found`、经过凭据清洗的 `endpoint`、原始 `provider_message` 和操作说明，不自动重试或修改协议。
 
 最关键的启动依赖：
 

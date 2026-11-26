@@ -1,8 +1,8 @@
 /**
  * Telegram-style grouping of native settings panels. Each row names the native
  * control that owns the value; its kind follows the control (checkbox, select
- * or range) and rows whose control is absent are skipped. Checkbox rows reuse
- * the native, already translated label. Desktop-only options (blur, shadows,
+ * or range) and rows whose control is absent are skipped. Rows reuse the native
+ * translated label unless a shorter mobile label is specified. Desktop-only options (blur, shadows,
  * MovingUI, hover magnification) stay reachable through "All settings".
  */
 export const userSettingsPage = {
@@ -48,7 +48,7 @@ export const userSettingsPage = {
             { id: 'smooth_streaming_no_think' },
             { id: 'stream_fade_in' },
             { id: 'streaming_fps', label: 'Streaming FPS' },
-        ] },
+        ], note: 'Smooth streaming changes how text appears, not how fast the service generates it. If scrolling stutters, disable smooth streaming or lower its frame rate.' },
         { title: 'Chat', rows: [
             { id: 'swipes-checkbox' },
             { id: 'gestures-checkbox' },
@@ -100,10 +100,21 @@ const CONNECTORS = { openai: 'openai_api', textgenerationwebui: 'textgenerationw
 const CONNECT_BUTTONS = { openai: 'api_button_openai', textgenerationwebui: 'api_button_textgenerationwebui', novel: 'api_button_novel', kobold: 'api_button' };
 const SOURCE_SELECTS = { openai: 'chat_completion_source', textgenerationwebui: 'textgen_type' };
 const SKIPPED_TYPES = new Set(['hidden', 'file', 'button', 'submit', 'reset', 'radio', 'image']);
+const CONNECTION_HELP = {
+    chat_completion_source: 'Choose the protocol your service documents. Most OpenAI-compatible services use Custom (OpenAI-compatible), regardless of the model name.',
+    custom_api_url_text: 'Enter the service Base URL, for example https://example.com/v1. Keep its version path. Do not append /chat/completions or /models.',
+    custom_model_id: 'Use the exact model ID returned by your service, including any prefixes or Chinese text. The model name does not decide the API protocol. Connect to load models, or enter the ID manually.',
+    model_custom_select: 'Connect to fetch the list, then choose a model. This fills the Model ID automatically. If the service does not provide a list, enter the ID manually.',
+};
 
 /** Native code toggles source-specific fields with inline display or classes. */
 function shownWithin(element, root) {
-    for (let node = element; node && node !== root; node = node.parentElement) {
+    // Native icon toggles hide only the checkbox’s drawing. Their label remains
+    // the visible control; source-hidden labels and sections still stay hidden.
+    const visibleControl = element.type === 'checkbox' && element.style?.display === 'none'
+        && !element.hidden && !element.classList.contains('displayNone')
+        ? element.closest('label') || element : element;
+    for (let node = visibleControl; node && node !== root; node = node.parentElement) {
         if (node.hidden || node.style?.display === 'none' || node.classList?.contains('displayNone')) return false;
     }
     return true;
@@ -129,25 +140,39 @@ export function connectionSections(document) {
     const api = document.getElementById('main_api')?.value || '';
     const root = document.getElementById(CONNECTORS[api]);
     const source = SOURCE_SELECTS[api];
-    const details = visibleControls(root, root, new Set([source]));
+    const preview = api === 'openai' && document.getElementById('custom_endpoint_preview');
+    const details = visibleControls(root, root, new Set([source]))
+        .map(row => ({ ...row, help: CONNECTION_HELP[row.element.id] }));
+    const advanced = row => row.element.type === 'checkbox' || row.element.tagName === 'TEXTAREA' || row.element.id === 'custom_prompt_post_processing'
+        || Boolean(row.element.closest('.inline-drawer'));
     return [
         { title: 'Connection', rows: [
             { id: 'main_api', label: 'API' },
-            source && { id: source, label: 'API source' },
+            source && { id: source, label: 'API source', help: CONNECTION_HELP[source] },
+        ].filter(Boolean), note: CONNECTION_HELP.chat_completion_source },
+        { title: 'Connection details', rows: [
+            ...details.filter(row => !advanced(row)),
+            preview && root && shownWithin(preview, root) && { status: preview, label: 'Request endpoint' },
+        ].filter(Boolean),
+            note: 'Save the address, API key and model first, then Connect. Saved keys stay hidden after restarting; Saved means the key is stored on this device.' },
+        { title: 'Advanced connection options', rows: details.filter(advanced), collapsed: true,
+            note: 'Keep these defaults unless your service specifically requires a change.' },
+        { title: 'Connect and test', rows: [
             root?.querySelector('.online_status_text') && { status: root.querySelector('.online_status_text'), label: 'Status' },
             CONNECT_BUTTONS[api] && { action: CONNECT_BUTTONS[api], label: 'Connect' },
             api === 'openai' && { action: 'test_api_button', label: 'Test Message' },
-        ].filter(Boolean) },
-        { title: 'Connection details', rows: details },
+        ].filter(Boolean), note: 'Connect checks the connection and loads models. Test Message sends a short request and may use API credit. A server error does not erase your saved configuration.' },
     ];
 }
 
 export const connectionPage = {
+    intro: 'Choose an API type and source, enter your service details, then connect. The protocol comes from your API service, not from the character card.',
     sections: connectionSections,
-    footer: 'The original connection panel with every option.',
+    footer: 'HTTP 404: check the service address and protocol. HTTP 503: the service is temporarily unavailable, such as during maintenance or heavy load. Check its announcements and retry later. Saved connection settings remain on this device.',
 };
 
-const LENGTH_CONTROL = /context|max_tokens|amount_gen|^n_|_n$|stream/i;
+const LENGTH_CONTROL = /context|max_tokens|amount_gen/i;
+const GENERATION_BEHAVIOR_CONTROL = /^n_|_n$|stream|function_call|recurs/i;
 
 const GENERATION_BLOCKS = {
     openai: { ranges: 'range_block_openai', settings: 'openai_settings' },
@@ -172,7 +197,8 @@ export function generationSections(document) {
         : document.querySelector(`[data-preset-manager-update="${manager}"]`);
     const saveAs = api === 'openai' ? document.getElementById('new_oai_preset')
         : document.querySelector(`[data-preset-manager-new="${manager}"]`);
-    const seen = new Set(preset ? [preset.id] : []);
+    const binding = api === 'openai' ? document.getElementById('bind_preset_to_connection') : null;
+    const seen = new Set([preset?.id, binding?.id].filter(Boolean));
     const take = id => visibleControls(document.getElementById(id), panel, seen)
         .filter(({ element }) => !seen.has(element.id) && seen.add(element.id));
     // Native blocks mix length, sampling and prompt fields per API; regroup
@@ -180,20 +206,30 @@ export function generationSections(document) {
     const controls = [...take('common-gen-settings-block'), ...take(blocks.ranges), ...take(blocks.settings)];
     const isLength = ({ element }) => LENGTH_CONTROL.test(element.id);
     const isPrompt = ({ element }) => element.tagName === 'TEXTAREA';
+    const isSampling = row => !isLength(row) && !GENERATION_BEHAVIOR_CONTROL.test(row.element.id)
+        && row.element.type === 'range';
     return [
         { title: 'Presets', rows: [
             preset && { element: preset, label: 'Preset' },
+            binding && { element: binding, label: 'Restore API connection with preset' },
             update && { element: update, action: true, label: 'Update current preset' },
             saveAs && { element: saveAs, action: true, label: 'Save preset as' },
-        ].filter(Boolean) },
-        { title: 'Context and length', rows: controls.filter(isLength) },
-        { title: 'Sampling', rows: controls.filter(row => !isLength(row) && !isPrompt(row) && row.element.type === 'range') },
-        { title: 'More options', rows: controls.filter(row => !isLength(row) && !isPrompt(row) && row.element.type !== 'range') },
-        { title: 'Utility prompts', rows: controls.filter(isPrompt) },
+        ].filter(Boolean), note: binding
+            ? 'When enabled, switching presets restores the API source, URL and model. Turn this off to keep your current connection. API keys are saved separately.'
+            : undefined },
+        { title: 'Context and length', rows: controls.filter(isLength),
+            note: 'Context includes your history, prompts and reserved reply space. Set it above the maximum response length and follow your service’s limits. Higher reply limits allow more text and thinking, which may take longer.' },
+        { title: 'Sampling', rows: controls.filter(isSampling),
+            note: 'Tap a number to enter an exact value, or drag its slider. Start with the model or preset defaults; you do not need to adjust every sampler.' },
+        { title: 'More options', rows: controls.filter(row => !isLength(row) && !isPrompt(row) && !isSampling(row)), collapsed: true,
+            note: 'Streaming shows the reply as it arrives. Multiple replies and tool-call recursion may make extra API requests. Change these only when you need them.' },
+        { title: 'Utility prompts', rows: controls.filter(isPrompt), collapsed: true,
+            note: 'These are reusable prompt templates. Keep their macros, such as {{char}} and {{user}}, and only replace them when your character card or preset gives instructions.' },
     ];
 }
 
 export const generationPage = {
+    intro: 'These settings control the current chat. Saving an edit keeps it on this device; Update current preset also writes the values into the selected preset. Tap a slider’s number for precise input.',
     sections: generationSections,
     footer: 'The original panel, with preset import and export.',
 };
@@ -225,15 +261,15 @@ export function formattingSections(document) {
             { id: 'context_presets', label: 'Template' },
             presetButton(document, 'update', 'context', 'Update current template'),
             presetButton(document, 'new', 'context', 'Save template as'),
-            { id: 'context_derived' },
+            { id: 'context_derived', label: 'Choose context template from model metadata' },
             { id: 'context_story_string', label: 'Story String' },
             { id: 'context_story_string_position', label: 'Position' },
             { id: 'context_story_string_depth', label: 'Depth' },
             { id: 'context_story_string_role', label: 'Role' },
             { id: 'context_example_separator', label: 'Example Separator' },
             { id: 'context_chat_start', label: 'Chat Start' },
-        ]) },
-        { title: 'Context Formatting', rows: rows([
+        ]), note: 'A context template arranges character information and chat prompts. Choose a preset first. Keep template expressions such as {{description}} unless the preset author tells you to change them.' },
+        { title: 'Context Formatting', collapsed: true, rows: rows([
             { id: 'always-force-name2-checkbox' },
             { id: 'single_line' },
             { id: 'collapse-newlines-checkbox' },
@@ -247,16 +283,16 @@ export function formattingSections(document) {
             { id: 'instruct_presets', label: 'Template' },
             presetButton(document, 'update', 'instruct', 'Update current template'),
             presetButton(document, 'new', 'instruct', 'Save template as'),
-            { id: 'instruct_derived' },
-            { id: 'instruct_bind_to_context' },
+            { id: 'instruct_derived', label: 'Choose instruct template from model metadata' },
+            { id: 'instruct_bind_to_context', label: 'Match context template to instruct template' },
             { id: 'instruct_activation_regex', label: 'Activation Regex' },
             { id: 'instruct_wrap' },
             { id: 'instruct_macro' },
             { id: 'instruct_sequences_as_stop_strings' },
             { id: 'instruct_skip_examples' },
             { id: 'instruct_names_behavior', label: 'Include Names' },
-        ]) },
-        { title: 'Instruct Sequences', rows: rows([
+        ]), note: 'An instruct template defines how user and assistant turns are formatted. Follow your model’s template instructions; these fields are not connection credentials.' },
+        { title: 'Instruct Sequences', collapsed: true, rows: rows([
             { id: 'instruct_story_string_prefix', label: 'Story String Prefix' },
             { id: 'instruct_story_string_suffix', label: 'Story String Suffix' },
             { id: 'instruct_input_sequence', label: 'User Message Prefix' },
@@ -273,7 +309,7 @@ export function formattingSections(document) {
             { id: 'instruct_last_system_sequence', label: 'System Instruction Prefix' },
             { id: 'instruct_stop_sequence', label: 'Stop Sequence' },
             { id: 'instruct_user_alignment_message', label: 'User Filler Message' },
-        ]) },
+        ]), note: 'Prefixes and suffixes are literal template text. Spaces and newlines matter. A preview such as "\\n\\n" means two real newlines; the editor keeps the original characters.' },
         { title: 'System Prompt', rows: rows([
             { id: 'sysprompt_enabled' },
             { id: 'sysprompt_select', label: 'Prompt' },
@@ -282,7 +318,7 @@ export function formattingSections(document) {
             { id: 'sysprompt_content', label: 'Prompt Content' },
             { id: 'sysprompt_post_history', label: 'Post-History Instructions' },
         ]) },
-        { title: 'Reasoning', rows: rows([
+        { title: 'Reasoning', collapsed: true, rows: rows([
             { id: 'reasoning_auto_parse' },
             { id: 'reasoning_auto_expand' },
             { id: 'reasoning_show_hidden' },
@@ -295,13 +331,13 @@ export function formattingSections(document) {
             { id: 'reasoning_suffix', label: 'Suffix' },
             { id: 'reasoning_separator', label: 'Separator' },
         ]) },
-        { title: 'Stopping strings and tokenizer', rows: rows([
+        { title: 'Stopping strings and tokenizer', collapsed: true, rows: rows([
             { id: 'custom_stopping_strings', label: 'Custom Stopping Strings' },
             { id: 'custom_stopping_strings_macro' },
             { id: 'tokenizer', label: 'Tokenizer' },
             { id: 'token_padding', label: 'Token Padding' },
         ]) },
-        { title: 'Miscellaneous', rows: rows([
+        { title: 'Miscellaneous', collapsed: true, rows: rows([
             { id: 'bind_model_templates' },
             { id: 'start_reply_with', label: 'Start Reply With' },
             { id: 'chat-show-reply-prefix-checkbox' },
@@ -311,6 +347,7 @@ export function formattingSections(document) {
 }
 
 export const formattingPage = {
+    intro: 'These are advanced prompt templates, not API credentials. Start with the defaults; only change them when your model or character card provides specific instructions. You do not need to fill every field.',
     sections: formattingSections,
     footer: 'The original panel, with template import and export.',
 };

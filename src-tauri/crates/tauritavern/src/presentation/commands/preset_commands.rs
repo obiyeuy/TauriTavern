@@ -229,11 +229,9 @@ pub async fn delete_openai_preset(
 }
 
 fn preset_type_from_api_id(api_id: &str) -> Result<PresetType, CommandError> {
-    PresetType::from_api_id(api_id).ok_or_else(|| {
-        let message = format!("Unknown API ID: {}", api_id);
-        log_user_visible_error(&message);
-        CommandError::BadRequest(message)
-    })
+    PresetType::from_api_id(api_id)
+        .ok_or_else(|| CommandError::BadRequest(format!("Unknown API ID: {}", api_id)))
+        .map_err(map_command_error("Invalid preset API"))
 }
 
 fn preset_skill_source_id(api_id: &str, name: &str) -> String {

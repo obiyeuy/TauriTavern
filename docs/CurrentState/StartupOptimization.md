@@ -18,6 +18,7 @@
 - **扩展启动分层**：扩展发现可提前后台启动；系统扩展仍在 Full 阶段完成，local/global third-party 扩展延后到 `APP_READY` 后串行激活，从启动关键路径移出。
 - **lib.bundle 拆分为 core/optional**：`highlight.js` 通过 `lib.js` 的 async helper 按需加载；上游同步 `/lib.js` ABI 保留在 core bundle。
 - **重任务后移**：`initTokenizers()`、`initScrapers()` 在 `APP_READY` 后、两次 paint 之后后台启动。
+- **聊天依赖就绪**：`APP_READY` 监听器结束后发布唯一的第三方激活任务，首个 post-ready paint 后执行。角色/群组选择、聊天加载和生成等待同一任务；可选 tokenizer/scraper 初始化独立运行，不再延迟脚本激活。
 
 ---
 
@@ -75,6 +76,7 @@
   - **Post-ready（后台）**
     - `initTokenizers()`、`initScrapers()`：在 `APP_READY` 后异步执行（避免阻塞首屏）。
     - 若存在启用中的 third-party 扩展：`activateDeferredThirdPartyExtensions({ parallelism: 1 })` 在首屏完成后后台激活，并在完成后 emit `EXTENSION_SETTINGS_LOADED`。
+    - 桌面恢复上次聊天在扩展激活后执行；手机始终先展示列表，用户选中时才加载聊天。列表与设置不等待第三方激活；聊天事件只发送原来的那一次，不在扩展加载后伪造重放。
 
 ---
 
@@ -123,6 +125,8 @@
   - Android 设备默认 `parallelism = 1`；其他默认 `parallelism = 2`（见 `src/script.js`）。
 - third-party 激活：`activateDeferredThirdPartyExtensions({ parallelism: 1 })`
   - 仅处理 `local/global` 扩展，默认在 `APP_READY` 后执行，避免把大体量 third-party 模块求值放进启动关键路径。
+  - 启动通过 `startDeferredThirdPartyExtensions()` 保存实际任务 Promise；共享的 `waitForStartupExtensions()` 等待模块求值与声明的 activate hook。加载异常继续传播到依赖操作，并给出错误提示；不满足 Extras/版本/依赖要求的扩展沿原规则跳过并警告。
+  - `APP_READY` 的既有 awaited 监听器不等待后续任务，避免 Quick Reply 的启动脚本反过来等待自身。任意第三方后台异步任务或卡片的远程 import 不属于这个模块就绪保证。
 - third-party 兼容（hljs）：
   - third-party 扩展激活前会 `await getHljs()`，确保 `window.hljs` 存在（`src/scripts/extensions.js`）。
 

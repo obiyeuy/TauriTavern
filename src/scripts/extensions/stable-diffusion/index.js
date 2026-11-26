@@ -1,4 +1,5 @@
 import { Popper } from '../../../lib.js';
+import { toUserFacingErrorText } from '../../util/user-facing-error.js';
 import {
     animation_duration,
     appendMediaToMessage,
@@ -363,7 +364,9 @@ const defaultSettings = {
     google_duration: 6,
 };
 
-const writePromptFieldsDebounced = debounce(writePromptFields, debounce_timeout.relaxed);
+const writePromptFieldsDebounced = debounce(characterId => {
+    void writePromptFields(characterId).catch(reportCharacterPromptSaveError);
+}, debounce_timeout.relaxed);
 const isVideo = (/** @type {string} */ format) => VIDEO_EXTENSIONS.includes(String(format || '').trim().toLowerCase());
 
 /**
@@ -5266,11 +5269,20 @@ async function onCharacterPromptShareInput() {
 
     const shouldShare = !!$('#sd_character_prompt_share').prop('checked');
 
-    if (shouldShare) {
-        await writePromptFields(this_chid);
-    } else {
-        await writeExtensionField(this_chid, 'sd_character_prompt', null);
+    try {
+        if (shouldShare) {
+            await writePromptFields(this_chid);
+        } else {
+            await writeExtensionField(this_chid, 'sd_character_prompt', null);
+        }
+    } catch (error) {
+        reportCharacterPromptSaveError(error);
     }
+}
+
+function reportCharacterPromptSaveError(error) {
+    console.error('Failed to save character image prompts:', error);
+    toastr.error(toUserFacingErrorText(error), t`Could not save character image prompts`);
 }
 
 async function writePromptFields(characterId) {

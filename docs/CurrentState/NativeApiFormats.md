@@ -73,7 +73,9 @@ DeepSeek 的原生与 Custom/OpenCode 兼容请求共享后端适配，保留各
 
 > 备注：Claude 的 streaming 仍保持“Anthropic 事件流 JSON”语义；Responses/Interactions streaming 则统一归一化为 OpenAI `chat.completion.chunk`。
 
-JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误，Legacy 与 Agent 使用同一传播路径；流式前端只忽略非 JSON 帧，不吞掉已识别的 provider 错误。
+非流式 JSON 响应中的明确 error（包括 HTTP 200）在共同读取处转为错误，Legacy 与 Agent 使用同一传播路径；流式前端只忽略非 JSON 帧，不吞掉已识别的 provider 错误。
+
+共有 SSE reader 按实际分发的非空 payload 判定响应有效，EOF 的 pending event 照常分发。连接正常结束但没有 payload 时，返回 `model.upstream_invalid_response` 的 Transient 并记录 HTTP 诊断，普通 JSON、HTML 或只有 keepalive 的 body 不会被报告为成功。真正的 SSE 数据即使 content type 不准确仍照常逐段输出；各 provider 的 terminal event 校验保持。已就绪的取消信号在共用流读取入口优先处理，取消与空响应 EOF 同时就绪时也正常结束，不产生零 payload 失败。
 
 ---
 

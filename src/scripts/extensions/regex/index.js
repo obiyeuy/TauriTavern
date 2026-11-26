@@ -14,9 +14,15 @@ import { accountStorage } from '../../util/AccountStorage.js';
 import { getPresetManager } from '../../preset-manager.js';
 import { debounce_timeout } from '../../constants.js';
 import { mountCodeMirrorEditor } from '../../tauri/codemirror-editor.js';
+import { toUserFacingErrorText } from '../../util/user-facing-error.js';
 
 // Re-exports for legacy extensions
 export { getRegexScripts };
+
+function reportRegexOperationError(error) {
+    console.error('Regex operation failed:', error);
+    toastr.error(toUserFacingErrorText(error), t`Could not save regex changes`);
+}
 
 const sanitizeFileName = name => name.replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, '_').toLowerCase();
 const REGEX_CHAT_REFRESH_DEBOUNCE_MS = 500;
@@ -162,20 +168,14 @@ class RegexPresetManager {
     hasStateChanged(state1, state2) {
         if (!state1 || !state2) return false;
 
-        const global1 = state1.global || [];
-        const global2 = state2.global || [];
-        const scoped1 = state1.scoped || [];
-        const scoped2 = state2.scoped || [];
-        const preset1 = state1.preset || [];
-        const preset2 = state2.preset || [];
-
-        if (global1.length !== global2.length || scoped1.length !== scoped2.length) {
-            return true;
+        for (const scope of ['global', 'scoped', 'preset']) {
+            const previous = state1[scope] || [];
+            const current = state2[scope] || [];
+            if (previous.length !== current.length || !previous.every(id => current.includes(id))) {
+                return true;
+            }
         }
-
-        return !global1.every(id => global2.includes(id)) ||
-            !scoped1.every(id => scoped2.includes(id)) ||
-            !preset1.every(id => preset2.includes(id));
+        return false;
     }
 
     /**
@@ -239,24 +239,22 @@ class RegexPresetManager {
             const selectedPresetId = this.presetSelect.value;
             const fromSlashCommand = event instanceof CustomEvent && event?.detail?.fromSlashCommand === true;
 
-            // Check for unsaved changes before switching
-            if (!fromSlashCommand) {
-                const canProceed = await this.checkUnsavedChanges();
-                if (!canProceed) {
-                    // Revert the selection
-                    event.preventDefault();
-                    const currentPreset = extension_settings.regex_presets.find(p => p.id === this.currentPresetId);
-                    if (currentPreset) {
-                        this.presetSelect.value = currentPreset.id;
+            try {
+                // Check for unsaved changes before switching
+                if (!fromSlashCommand) {
+                    const canProceed = await this.checkUnsavedChanges();
+                    if (!canProceed) {
+                        event.preventDefault();
+                        this.presetSelect.value = this.currentPresetId ?? '';
+                        return;
                     }
-                    return;
                 }
+                await this.applyPreset(selectedPresetId);
+            } catch (error) {
+                this.presetSelect.value = this.currentPresetId ?? '';
+                console.error('Failed to fully apply regex preset:', error);
+                toastr.error(toUserFacingErrorText(error), t`Regex preset was not fully applied`);
             }
-
-            await this.applyPreset(selectedPresetId);
-            extension_settings.regex_presets.forEach(p => { p.isSelected = p.id === selectedPresetId; });
-            saveSettingsDebounced();
-            this.updateStoredState(selectedPresetId);
         });
 
         this.presetCreateButton = document.getElementById('regex_preset_create');
@@ -269,7 +267,6 @@ class RegexPresetManager {
             const newId = uuidv4();
             await this.savePreset(newId, false);
             this.renderPresetList();
-            this.updateStoredState(newId);
         });
 
         this.presetUpdateButton = document.getElementById('regex_preset_update');
@@ -282,7 +279,6 @@ class RegexPresetManager {
             const selectedPresetId = this.presetSelect.value;
             await this.savePreset(selectedPresetId, true);
             this.renderPresetList();
-            this.updateStoredState(selectedPresetId);
         });
 
         this.presetApplyButton = document.getElementById('regex_preset_apply');
@@ -293,8 +289,13 @@ class RegexPresetManager {
 
         this.presetApplyButton.addEventListener('click', async () => {
             const selectedPresetId = this.presetSelect.value;
-            await this.applyPreset(selectedPresetId);
-            this.updateStoredState(selectedPresetId);
+            try {
+                await this.applyPreset(selectedPresetId);
+            } catch (error) {
+                this.presetSelect.value = this.currentPresetId ?? '';
+                console.error('Failed to fully apply regex preset:', error);
+                toastr.error(toUserFacingErrorText(error), t`Regex preset was not fully applied`);
+            }
         });
 
         this.presetDeleteButton = document.getElementById('regex_preset_delete');
@@ -305,17 +306,18 @@ class RegexPresetManager {
 
         this.presetDeleteButton.addEventListener('click', async () => {
             const selectedPresetId = this.presetSelect.value;
-            await this.deletePreset(selectedPresetId);
+            if (!await this.deletePreset(selectedPresetId)) return;
             this.renderPresetList();
 
-            const newSelectedPresetId = extension_settings.regex_presets.find(p => p.isSelected)?.id;
+            const newSelectedPresetId = this.currentPresetId ?? extension_settings.regex_presets[0]?.id;
             if (newSelectedPresetId) {
-                await this.applyPreset(newSelectedPresetId);
-                this.presetSelect.value = newSelectedPresetId;
-                this.updateStoredState(newSelectedPresetId);
-            } else {
-                this.currentPresetId = null;
-                this.lastKnownState = null;
+                try {
+                    await this.applyPreset(newSelectedPresetId);
+                } catch (error) {
+                    this.presetSelect.value = this.currentPresetId ?? '';
+                    console.error('Failed to apply regex preset after deletion:', error);
+                    toastr.error(toUserFacingErrorText(error), t`Regex preset was not fully applied`);
+                }
             }
         });
 
@@ -336,7 +338,7 @@ class RegexPresetManager {
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({
             name: 'regex-preset',
             helpString: t`Selects a regex preset by name or ID. Gets the current regex preset ID if no argument is provided.`,
-            callback: (args, name) => {
+            callback: async (args, name) => {
                 if (!this.presetSelect) {
                     return '';
                 }
@@ -348,8 +350,7 @@ class RegexPresetManager {
                     const foundId = extension_settings.regex_presets.find(p => equalsIgnoreCaseAndAccents(p.id, name) || equalsIgnoreCaseAndAccents(p.name, name))?.id;
 
                     if (foundId) {
-                        this.presetSelect.value = foundId;
-                        this.presetSelect.dispatchEvent(new CustomEvent('change', { detail: { fromSlashCommand: true } }));
+                        await this.applyPreset(foundId);
                         return foundId;
                     }
 
@@ -417,6 +418,8 @@ class RegexPresetManager {
             return;
         }
 
+        // Stage this list so a rejected save does not change the current scripts.
+        targetList = structuredClone(targetList);
         // Only enable scripts that are in the preset
         targetList.forEach((script => {
             script.disabled = !presetList.some(p => p.id === script.id);
@@ -440,8 +443,7 @@ class RegexPresetManager {
     async applyPreset(presetId) {
         const preset = extension_settings.regex_presets.find(p => p.id === presetId);
         if (!preset) {
-            toastr.error(t`Could not find the selected preset.`);
-            return;
+            throw new Error(t`Could not find the selected preset.`);
         }
 
         // Apply preset to all lists
@@ -459,6 +461,10 @@ class RegexPresetManager {
 
         // Render the changes to the UI
         await loadRegexScripts();
+        extension_settings.regex_presets.forEach(p => { p.isSelected = p.id === presetId; });
+        this.updateStoredState(presetId);
+        this.presetSelect.value = presetId;
+        saveSettingsDebounced();
         // Apply the changes to the current chat
         requestRegexChatRefresh();
     }
@@ -513,6 +519,7 @@ class RegexPresetManager {
         }
 
         extension_settings.regex_presets.forEach(p => { p.isSelected = p.id === id; });
+        this.updateStoredState(id);
         saveSettingsDebounced();
 
         toastr.success(isUpdate ? t`Regex preset updated` : t`Regex preset saved`);
@@ -521,28 +528,31 @@ class RegexPresetManager {
     /**
      * Deletes a regex preset.
      * @param {string} presetId - The ID of the preset to delete
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} Whether the preset was deleted
      */
     async deletePreset(presetId) {
         const presetIndex = extension_settings.regex_presets.findIndex(p => p.id === presetId);
         if (presetIndex === -1) {
             toastr.error(t`Could not find the preset to delete.`);
-            return;
+            return false;
         }
 
         const presetName = extension_settings.regex_presets[presetIndex].name;
         const confirm = await Popup.show.confirm(t`Are you sure you want to delete this regex preset?`, presetName);
         if (!confirm) {
-            return;
+            return false;
         }
 
         extension_settings.regex_presets.splice(presetIndex, 1);
 
-        // Select the first preset if any exist
-        extension_settings.regex_presets.forEach((p, i) => { p.isSelected = i === 0; });
+        if (this.currentPresetId === presetId) {
+            this.currentPresetId = null;
+            this.lastKnownState = null;
+        }
         saveSettingsDebounced();
 
         toastr.success(t`Regex preset deleted`);
+        return true;
     }
 }
 
@@ -710,7 +720,7 @@ async function loadRegexScripts() {
     function renderScript(container, script, scriptType, index) {
         // Have to clone here
         const scriptHtml = scriptTemplate.clone();
-        const save = () => saveRegexScript(script, index, scriptType);
+        const save = () => saveRegexScript(script, index, scriptType).catch(reportRegexOperationError);
 
         if (!script.id) {
             script.id = uuidv4();
@@ -730,7 +740,7 @@ async function loadRegexScripts() {
             scriptHtml.find('.disable_regex').prop('checked', false).trigger('input');
         });
         scriptHtml.find('.edit_existing_regex').on('click', async function () {
-            await onRegexEditorOpenClick(scriptHtml.attr('id'), scriptType);
+            await onRegexEditorOpenClick(scriptHtml.attr('id'), scriptType).catch(reportRegexOperationError);
         });
         scriptHtml.find('.move_to_global').on('click', async function () {
             const confirm = await callGenericPopup(t`Are you sure you want to move this regex script to global?`, POPUP_TYPE.CONFIRM);
@@ -738,7 +748,7 @@ async function loadRegexScripts() {
             if (!confirm) {
                 return;
             }
-            await moveRegexScript(script, SCRIPT_TYPES.GLOBAL, scriptType);
+            await moveRegexScript(script, SCRIPT_TYPES.GLOBAL, scriptType).catch(reportRegexOperationError);
         });
         scriptHtml.find('.move_to_scoped').on('click', async function () {
             if (this_chid === undefined) {
@@ -753,7 +763,7 @@ async function loadRegexScripts() {
             if (!confirm) {
                 return;
             }
-            await moveRegexScript(script, SCRIPT_TYPES.SCOPED, scriptType);
+            await moveRegexScript(script, SCRIPT_TYPES.SCOPED, scriptType).catch(reportRegexOperationError);
         });
         scriptHtml.find('.move_to_preset').on('click', async function () {
             const confirm = await callGenericPopup(
@@ -763,7 +773,7 @@ async function loadRegexScripts() {
             if (!confirm) {
                 return;
             }
-            await moveRegexScript(script, SCRIPT_TYPES.PRESET, scriptType);
+            await moveRegexScript(script, SCRIPT_TYPES.PRESET, scriptType).catch(reportRegexOperationError);
         });
         scriptHtml.find('.export_regex').on('click', async function () {
             const fileName = `regex-${sanitizeFileName(script.scriptName)}.json`;
@@ -775,8 +785,12 @@ async function loadRegexScripts() {
             if (!confirm) {
                 return;
             }
-            await deleteRegexScript(script.id, scriptType);
-            requestRegexChatRefresh();
+            try {
+                await deleteRegexScript(script.id, scriptType);
+                requestRegexChatRefresh();
+            } catch (error) {
+                reportRegexOperationError(error);
+            }
         });
         scriptHtml.find('.regex_bulk_checkbox').on('change', function () {
             setMoveButtonsVisibility();
@@ -956,7 +970,7 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
             maxDepth: parseInt(String(editorHtml.find('input[name="max_depth"]').val())),
         };
 
-        saveRegexScript(newRegexScript, existingScriptIndex, scriptType);
+        await saveRegexScript(newRegexScript, existingScriptIndex, scriptType);
     }
 }
 
@@ -1355,11 +1369,16 @@ async function onRegexDebuggerOpenClick() {
         const newScopedScripts = $('#regex_debugger_rules_scoped').children('li').map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id'))).get().filter(Boolean);
         const newPresetScripts = $('#regex_debugger_rules_preset').children('li').map((_, el) => allKnownScripts.find(s => s.id === $(el).data('id'))).get().filter(Boolean);
 
-        extension_settings.regex = newGlobalScripts;
-        if (this_chid !== undefined) {
-            await saveScriptsByType(newScopedScripts, SCRIPT_TYPES.SCOPED);
+        try {
+            if (this_chid !== undefined) {
+                await saveScriptsByType(newScopedScripts, SCRIPT_TYPES.SCOPED);
+            }
+            await saveScriptsByType(newPresetScripts, SCRIPT_TYPES.PRESET);
+        } catch (error) {
+            reportRegexOperationError(error);
+            return;
         }
-        await saveScriptsByType(newPresetScripts, SCRIPT_TYPES.PRESET);
+        extension_settings.regex = newGlobalScripts;
 
         saveSettingsDebounced();
         await loadRegexScripts();
@@ -1877,11 +1896,11 @@ export async function init() {
     });
 
     $('#bulk_enable_regex').on('click', async function () {
-        await bulkToggleRegexScripts(true);
+        await bulkToggleRegexScripts(true).catch(reportRegexOperationError);
     });
 
     $('#bulk_disable_regex').on('click', async function () {
-        await bulkToggleRegexScripts(false);
+        await bulkToggleRegexScripts(false).catch(reportRegexOperationError);
     });
 
     /**
@@ -1942,7 +1961,7 @@ export async function init() {
         if (!confirm) {
             return;
         }
-        await bulkMoveRegexScript(SCRIPT_TYPES.GLOBAL);
+        await bulkMoveRegexScript(SCRIPT_TYPES.GLOBAL).catch(reportRegexOperationError);
     });
 
     $('#bulk_regex_move_to_scoped').on('click', async () => {
@@ -1958,7 +1977,7 @@ export async function init() {
         if (!confirm) {
             return;
         }
-        await bulkMoveRegexScript(SCRIPT_TYPES.SCOPED);
+        await bulkMoveRegexScript(SCRIPT_TYPES.SCOPED).catch(reportRegexOperationError);
     });
 
     $('#bulk_regex_move_to_preset').on('click', async function () {
@@ -1966,7 +1985,7 @@ export async function init() {
         if (!confirm) {
             return;
         }
-        await bulkMoveRegexScript(SCRIPT_TYPES.PRESET);
+        await bulkMoveRegexScript(SCRIPT_TYPES.PRESET).catch(reportRegexOperationError);
     });
 
     $('#bulk_delete_regex').on('click', async function () {
@@ -1979,12 +1998,16 @@ export async function init() {
         if (!confirm) {
             return;
         }
-        for (const script of scripts) {
-            await deleteRegexScript(script.id, getScriptType(script), false);
+        try {
+            for (const script of scripts) {
+                await deleteRegexScript(script.id, getScriptType(script), false);
+            }
+            saveSettingsDebounced();
+            await loadRegexScripts();
+            requestRegexChatRefresh();
+        } catch (error) {
+            reportRegexOperationError(error);
         }
-        saveSettingsDebounced();
-        await loadRegexScripts();
-        requestRegexChatRefresh();
     });
 
     $('#bulk_export_regex').on('click', async function () {
@@ -2032,7 +2055,12 @@ export async function init() {
                     }
                 });
 
-                await setter(newScripts);
+                try {
+                    await setter(newScripts);
+                } catch (error) {
+                    reportRegexOperationError(error);
+                    return;
+                }
                 saveSettingsDebounced();
 
                 console.debug(`Regex scripts in ${selector} reordered`);

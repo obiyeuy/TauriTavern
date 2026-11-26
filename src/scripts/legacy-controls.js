@@ -1,5 +1,6 @@
 /** DOM-only compatibility for the old controls shared by login and the main app. */
 import { isElement, isHTMLElement } from './util/dom-types.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 export const INTERACTABLE_CONTROL_CLASS = 'interactable';
 export const CONTROL_SHELL_CLASS = 'tt-control-shell';
@@ -176,7 +177,7 @@ export function makeKeyboardInteractable(...controls) {
 
 /** @param {KeyboardEvent} event */
 function isUnmodifiedActivation(event) {
-    return !event.defaultPrevented && !event.isComposing
+    return !event.defaultPrevented && !isComposingKeyboardEvent(event)
         && !event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey;
 }
 

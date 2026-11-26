@@ -1,11 +1,15 @@
 import { getRequestHeaders, substituteParams } from '../../../../script.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
+import { isComposingKeyboardEvent } from '../../../util/keyboard-event.js';
 import { ChatInputFocusIntent, focusChatInput, getChatInput } from '../../../chat-input-focus.js';
 import { executeSlashCommandsOnChatInput, executeSlashCommandsWithOptions } from '../../../slash-commands.js';
 import { SlashCommandScope } from '../../../slash-commands/SlashCommandScope.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { debounceAsync, warn } from '../index.js';
 import { QuickReply } from './QuickReply.js';
+import { t } from '../../../i18n.js';
+import { requireOkResponse } from '../../../util/command-error-utils.js';
+import { toUserFacingErrorText } from '../../../util/user-facing-error.js';
 
 export class QuickReplySet {
     /**@type {QuickReplySet[]}*/ static list = [];
@@ -38,12 +42,21 @@ export class QuickReplySet {
     /**@type {QuickReply[]}*/ qrList = [];
     /**@type {number}*/ idIndex = 0;
     /**@type {boolean}*/ isDeleted = false;
-    /**@type {function}*/ save;
+    /**@type {() => Promise<boolean>}*/ save;
     /**@type {HTMLElement}*/ dom;
     /**@type {HTMLElement}*/ settingsDom;
 
     constructor() {
-        this.save = debounceAsync(()=>this.performSave(), 200);
+        this.save = debounceAsync(async () => {
+            try {
+                await this.performSave();
+                return true;
+            } catch (error) {
+                console.error(`Failed to save Quick Reply Set: ${this.name}`, error);
+                toastr.error(toUserFacingErrorText(error), t`Could not save Quick Reply Set`);
+                return false;
+            }
+        }, 200);
     }
 
     init() {
@@ -308,6 +321,7 @@ export class QuickReplySet {
                         }
                     });
                     sel.addEventListener('keydown', (evt)=>{
+                        if (isComposingKeyboardEvent(evt)) return;
                         if (evt.key == 'Shift') {
                             // @ts-ignore
                             (dlg.dom ?? dlg.dlg).classList.add('qr--isCopy');
@@ -380,12 +394,28 @@ export class QuickReplySet {
             body: JSON.stringify(this),
         });
 
-        if (response.ok) {
-            this.rerender();
-        } else {
-            warn(`Failed to save Quick Reply Set: ${this.name}`);
-            console.error('QR could not be saved', response);
+        await requireOkResponse(response, 'Save Quick Reply Set');
+        this.rerender();
+    }
+
+    /** Publish confirmed contents while preserving references to an existing named set. */
+    publishSaved() {
+        const existing = QuickReplySet.get(this.name);
+        if (existing && existing !== this) {
+            Object.assign(existing, this.toJSON());
+            existing.init();
+            existing.settingsDom = null;
+            existing.updateColor();
+            existing.rerender();
+            return existing;
         }
+        if (!existing) {
+            const index = QuickReplySet.list.findIndex(set =>
+                set.name.toLowerCase().localeCompare(this.name.toLowerCase()) > 0);
+            if (index < 0) QuickReplySet.list.push(this);
+            else QuickReplySet.list.splice(index, 0, this);
+        }
+        return this;
     }
 
     async delete() {
@@ -395,17 +425,14 @@ export class QuickReplySet {
             body: JSON.stringify(this),
         });
 
-        if (response.ok) {
-            this.unrender();
-            const idx = QuickReplySet.list.indexOf(this);
-            if (idx > -1) {
-                QuickReplySet.list.splice(idx, 1);
-                this.isDeleted = true;
-            } else {
-                warn(`Deleted Quick Reply Set was not found in the list of sets: ${this.name}`);
-            }
+        await requireOkResponse(response, 'Delete Quick Reply Set');
+        this.unrender();
+        const idx = QuickReplySet.list.indexOf(this);
+        if (idx > -1) {
+            QuickReplySet.list.splice(idx, 1);
+            this.isDeleted = true;
         } else {
-            warn(`Failed to delete Quick Reply Set: ${this.name}`);
+            warn(`Deleted Quick Reply Set was not found in the list of sets: ${this.name}`);
         }
     }
 }

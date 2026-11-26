@@ -5,6 +5,7 @@ import { t } from './i18n.js';
 import { isControlDisabled } from './legacy-controls.js';
 import { power_user, toastPositionClasses } from './power-user.js';
 import { clamp, removeFromArray, runAfterAnimation, uuidv4 } from './utils.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 /** @readonly */
 /** @enum {Number} */
@@ -735,7 +736,7 @@ export class Popup {
         this.dlg.addEventListener('close', closeListener.bind(this));
 
         const keyListener = async (evt) => {
-            if (evt.key !== 'Enter' || evt.defaultPrevented || evt.isComposing || evt.keyCode === 229
+            if (evt.key !== 'Enter' || evt.defaultPrevented || isComposingKeyboardEvent(evt)
                 || evt.altKey || evt.shiftKey) return;
 
             const control = document.activeElement;

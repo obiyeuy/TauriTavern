@@ -45,6 +45,8 @@ handler 内的 `resolve()` 处理嵌套内容，继续使用当前 MacroEnv。�
 
 live 环境中的聊天数据和运行状态是只读的，每次读取都取当前值。`captureContext()` 会把这些值复制为普通数据。名称、model 覆盖、`extra` 容器及每段文本的状态仍按调用准备。live 角色字段使用现有的惰性展开函数；显式上下文从保存的模板展开，两种路径使用相同的宏定义和变量规则。
 
+生成使用 `responseLength` 时，第一方请求准备把当前请求的预算放入 `env.system`：`maxResponse` 是本次生成长度，`maxPrompt` 是 context 减去该长度；对应宏及别名读取相同的数据。角色字段和 `env.functions.substitute()` 的后续求值沿用该请求的系统值，local/global 变量仍使用 live 接口。Agent 捕获在运行 provider 前准备这些系统值，保存的系统信息与 provider 数据一致。临时生成不会修改全局用户设置；扩展直接读取全局设置或另行调用普通 `substituteParams()` 时，仍读到用户偏好。
+
 ## 扩展宏
 
 需要支持独立求值的宏，应从 handler 收到的 `env` 读取上下文。扩展可以注册 provider，将自身数据放入 `env.extra`；这些数据需要能被 `structuredClone` 复制。下面的 `extensionSettings` 表示扩展自己的配置对象：

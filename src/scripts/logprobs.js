@@ -15,6 +15,7 @@ import { decodeTextTokens, getTokenizerBestMatch } from './tokenizers.js';
 import { power_user } from './power-user.js';
 import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { t } from './i18n.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 const TINTS = 4;
 const MAX_MESSAGE_LOGPROBS = 100;
@@ -155,6 +156,7 @@ function addKeyboardProps(element) {
     element.attr('role', 'button');
     element.attr('tabindex', '0');
     element.keydown(function (e) {
+        if (isComposingKeyboardEvent(e)) return;
         if (e.key === 'Enter' || e.key === ' ') {
             element.click();
         }

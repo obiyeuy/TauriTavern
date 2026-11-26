@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::fs;
 
 use crate::chat_jsonl::{read_payload, validate_metadata_integrity, write_payload};
@@ -76,14 +76,26 @@ impl FileChatRepository {
         Ok(chat)
     }
 
+    pub(super) fn fill_chat_header_defaults(chat: &Chat, header: &mut Map<String, Value>) {
+        header
+            .entry("user_name")
+            .or_insert_with(|| serde_json::json!(chat.user_name));
+        header
+            .entry("character_name")
+            .or_insert_with(|| serde_json::json!(chat.character_name));
+        header
+            .entry("create_date")
+            .or_insert_with(|| serde_json::json!(chat.create_date));
+        header
+            .entry("chat_metadata")
+            .or_insert_with(|| serde_json::json!(chat.chat_metadata));
+    }
+
     pub(super) fn build_payload_from_chat(chat: &Chat) -> Result<Vec<Value>, DomainError> {
         let mut objects = Vec::with_capacity(chat.messages.len() + 1);
-        objects.push(serde_json::json!({
-            "user_name": chat.user_name,
-            "character_name": chat.character_name,
-            "create_date": chat.create_date,
-            "chat_metadata": chat.chat_metadata,
-        }));
+        let mut header = Map::new();
+        Self::fill_chat_header_defaults(chat, &mut header);
+        objects.push(Value::Object(header));
 
         for message in &chat.messages {
             objects.push(serde_json::to_value(message).map_err(|error| {
@@ -126,7 +138,7 @@ impl FileChatRepository {
         &self,
         chat: &Chat,
         force: bool,
-    ) -> Result<(), DomainError> {
+    ) -> Result<PathBuf, DomainError> {
         let file_name = chat
             .file_name
             .as_ref()
@@ -137,7 +149,6 @@ impl FileChatRepository {
         let path = self
             .resolve_character_chat_path(&chat.character_name, file_name)
             .await?;
-        let backup_key = self.get_cache_key(&chat.character_name, file_name)?;
 
         // Ensure the character directory exists
         let character_dir = self
@@ -162,10 +173,6 @@ impl FileChatRepository {
             write_payload(&path, &objects).await?;
         }
 
-        // Update cache
-        let mut cache = self.memory_cache.lock().await;
-        cache.set(backup_key, chat.clone());
-
-        Ok(())
+        Ok(path)
     }
 }

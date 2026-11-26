@@ -1,11 +1,13 @@
+use std::collections::HashMap;
+
+use crate::errors::DomainError;
 use serde_json::{Map, Value, json};
-use tt_domain::errors::DomainError;
 
 const DEFAULT_DEPTH: i64 = 4;
 const DEFAULT_ROLE: i64 = 0;
 const DEFAULT_SELECTIVE_LOGIC: i64 = 0;
 
-pub(super) fn character_book_to_world_info(character_book: &Value) -> Result<Value, DomainError> {
+pub fn character_book_to_world_info(character_book: &Value) -> Result<Value, DomainError> {
     if let Some(entries_object) = character_book.get("entries").and_then(Value::as_object) {
         return Ok(json!({
             "entries": entries_object,
@@ -22,12 +24,20 @@ pub(super) fn character_book_to_world_info(character_book: &Value) -> Result<Val
 
     let mut converted_entries = Map::new();
     for (index, entry) in entries.iter().enumerate() {
+        validate_character_book_entry(entry, index)?;
         let converted_entry = convert_character_book_entry(entry, index);
         let uid = converted_entry
             .get("uid")
             .and_then(Value::as_i64)
             .unwrap_or(index as i64);
-        converted_entries.insert(uid.to_string(), converted_entry);
+        if converted_entries
+            .insert(uid.to_string(), converted_entry)
+            .is_some()
+        {
+            return Err(DomainError::InvalidData(format!(
+                "Character book contains duplicate entry id {uid}"
+            )));
+        }
     }
 
     Ok(json!({
@@ -36,7 +46,73 @@ pub(super) fn character_book_to_world_info(character_book: &Value) -> Result<Val
     }))
 }
 
-pub(super) fn world_info_to_character_book(
+fn validate_character_book_entry(entry: &Value, index: usize) -> Result<(), DomainError> {
+    if !entry.is_object() {
+        return Err(DomainError::InvalidData(format!(
+            "Character book entry {index} must be an object"
+        )));
+    }
+    let string_array = |value: &Value| {
+        value
+            .as_array()
+            .is_some_and(|values| values.iter().all(Value::is_string))
+    };
+    for (field, valid, expected) in [
+        (
+            "keys",
+            entry.get("keys").is_some_and(string_array),
+            "an array of strings",
+        ),
+        (
+            "content",
+            entry.get("content").is_some_and(Value::is_string),
+            "a string",
+        ),
+        (
+            "enabled",
+            entry.get("enabled").is_some_and(Value::is_boolean),
+            "a boolean",
+        ),
+    ] {
+        if !valid {
+            return Err(DomainError::InvalidData(format!(
+                "Character book entry {index}: {field} must be {expected}"
+            )));
+        }
+    }
+    // Numbering and ordering are optional in older CharacterBook exports.
+    for field in ["id", "insertion_order"] {
+        if entry
+            .get(field)
+            .is_some_and(|value| value.as_i64().is_none())
+        {
+            return Err(DomainError::InvalidData(format!(
+                "Character book entry {index}: {field} must be an integer"
+            )));
+        }
+    }
+    for (field, valid, expected) in [
+        (
+            "secondary_keys",
+            entry.get("secondary_keys").is_none_or(string_array),
+            "an array of strings",
+        ),
+        (
+            "extensions",
+            entry.get("extensions").is_none_or(Value::is_object),
+            "an object",
+        ),
+    ] {
+        if !valid {
+            return Err(DomainError::InvalidData(format!(
+                "Character book entry {index}: {field} must be {expected}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub fn world_info_to_character_book(
     world_name: &str,
     world_info: &Value,
 ) -> Result<Value, DomainError> {
@@ -47,10 +123,43 @@ pub(super) fn world_info_to_character_book(
             DomainError::InvalidData("World info file has invalid entries".to_string())
         })?;
 
+    let original_entries = world_info
+        .pointer("/originalData/entries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            entry.as_object().map(|fields| {
+                (
+                    entry
+                        .get("id")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(index as i64),
+                    fields,
+                )
+            })
+        })
+        .collect::<HashMap<_, _>>();
     let converted_entries = entries
         .values()
         .enumerate()
-        .map(|(index, entry)| convert_world_info_entry(entry, index))
+        .map(|(index, entry)| {
+            let converted = convert_world_info_entry(entry, index);
+            let id = converted["id"].as_i64().expect("converted entry id");
+            if let Some(original) = original_entries.get(&id) {
+                let mut fields = (*original).clone();
+                fields.extend(
+                    converted
+                        .as_object()
+                        .expect("converted entry object")
+                        .clone(),
+                );
+                Value::Object(fields)
+            } else {
+                converted
+            }
+        })
         .collect::<Vec<_>>();
 
     if let Some(original_data) = world_info.get("originalData") {
@@ -91,10 +200,9 @@ fn convert_character_book_entry(entry: &Value, index: usize) -> Value {
                 1
             }
         });
-    let enabled = entry
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let enabled = entry["enabled"]
+        .as_bool()
+        .expect("validated CharacterBook enabled");
     let extensions = entry
         .get("extensions")
         .and_then(Value::as_object)
@@ -103,19 +211,13 @@ fn convert_character_book_entry(entry: &Value, index: usize) -> Value {
 
     let mut result = Map::new();
     result.insert("uid".to_string(), json!(id));
-    result.insert(
-        "key".to_string(),
-        json!(parse_string_array(entry.get("keys"))),
-    );
+    result.insert("key".to_string(), entry["keys"].clone());
     result.insert(
         "keysecondary".to_string(),
         json!(parse_string_array(entry.get("secondary_keys"))),
     );
     result.insert("comment".to_string(), json!(comment.clone()));
-    result.insert(
-        "content".to_string(),
-        json!(entry.get("content").and_then(Value::as_str).unwrap_or("")),
-    );
+    result.insert("content".to_string(), entry["content"].clone());
     result.insert(
         "constant".to_string(),
         json!(
@@ -747,7 +849,7 @@ mod tests {
             "name": "Imported Lore",
             "description": "preserve me",
             "extensions": "future-shape",
-            "entries": [{ "id": 1, "keys": ["alpha"], "content": "stale" }]
+            "entries": [{ "id": 7, "keys": ["alpha"], "content": "stale", "futureField": { "preserve": true } }]
         });
         let world_info = json!({
             "entries": {
@@ -781,6 +883,10 @@ mod tests {
         assert_eq!(
             converted.pointer("/entries/0/extensions/custom"),
             Some(&json!("value"))
+        );
+        assert_eq!(
+            converted.pointer("/entries/0/futureField"),
+            Some(&json!({ "preserve": true }))
         );
     }
 }

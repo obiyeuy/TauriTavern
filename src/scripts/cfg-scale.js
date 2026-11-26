@@ -452,13 +452,13 @@ function getCustomSeparator() {
  * @param {boolean} quiet Whether to suppress console output
  * @returns {{value: string, depth: number}} The CFG prompt and insertion depth
  */
-export function getCfgPrompt(guidanceScale, isNegative, quiet = false) {
+export function getCfgPrompt(guidanceScale, isNegative, quiet = false, { substitute = substituteParams } = {}) {
     let splitCfgPrompt = [];
 
     const cfgPromptCombine = chat_metadata[metadataKeys.prompt_combine] ?? [];
     if (guidanceScale.type === cfgType.chat || cfgPromptCombine.includes(cfgType.chat)) {
         splitCfgPrompt.unshift(
-            substituteParams(
+            substitute(
                 chat_metadata[isNegative ? metadataKeys.negative_prompt : metadataKeys.positive_prompt],
             ),
         );
@@ -467,7 +467,7 @@ export function getCfgPrompt(guidanceScale, isNegative, quiet = false) {
     const charaCfg = extension_settings.cfg.chara?.find((e) => e.name === getCharaFilename(this_chid));
     if (guidanceScale.type === cfgType.chara || cfgPromptCombine.includes(cfgType.chara)) {
         splitCfgPrompt.unshift(
-            substituteParams(
+            substitute(
                 isNegative ? charaCfg.negative_prompt : charaCfg.positive_prompt,
             ),
         );
@@ -475,7 +475,7 @@ export function getCfgPrompt(guidanceScale, isNegative, quiet = false) {
 
     if (guidanceScale.type === cfgType.global || cfgPromptCombine.includes(cfgType.global)) {
         splitCfgPrompt.unshift(
-            substituteParams(
+            substitute(
                 isNegative ? extension_settings.cfg.global.negative_prompt : extension_settings.cfg.global.positive_prompt,
             ),
         );

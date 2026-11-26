@@ -3,6 +3,7 @@
 import { saveSettingsDebounced } from '../../../script.js';
 import { eventSource, event_types } from '../../events.js';
 import { translate } from '../../i18n.js';
+import { isComposingKeyboardEvent } from '../../util/keyboard-event.js';
 import { getControlLabel } from '../../dom-handlers.js';
 import { oai_settings, settingsToUpdate } from '../../openai.js';
 import { DRAWERS, EXCLUDED_PRESET_KEYS, PANEL_SCOPE, PAYLOAD_KEYS, SOURCE_SPECIFIC_MAX_SOURCES } from './catalog.js';
@@ -351,6 +352,7 @@ export function installGenerationParamsPanel() {
     q('.tt-gp-json-apply').addEventListener('click', applyJson);
     q('.tt-gp-json-reset').addEventListener('click', renderJson);
     jsonText.addEventListener('keydown', event => {
+        if (isComposingKeyboardEvent(event)) return;
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') applyJson();
     });
 
@@ -363,7 +365,7 @@ export function installGenerationParamsPanel() {
 
     addButton.addEventListener('click', () => setPickerOpen(picker.hidden));
     picker.addEventListener('keydown', event => {
-        if (event.key !== 'Escape') return;
+        if (event.key !== 'Escape' || isComposingKeyboardEvent(event)) return;
         event.preventDefault();
         event.stopPropagation();
         setPickerOpen(false);

@@ -2,12 +2,15 @@ import { eventSource, event_types } from './events.js';
 import { isMobileHost } from './util/host-identity.js';
 import {
     getCurrentChatDetails,
+    flushPendingSettingsSave,
     isChatSaving,
     isGenerating,
     online_status,
     setChatHistoryOpen,
     select_rm_characters,
 } from '../script.js';
+import { flushPendingSecretWrites } from './secrets.js';
+import { getPresetApplicationPromise, validateVertexAIServiceAccount } from './openai.js';
 import { setNavbarDrawerOpen } from '../script.js';
 import { isTopLevelDrawerOpen, setTopLevelDrawerOpen, subscribeDrawerState } from './drawers.js';
 import { installMobileChatShell } from './mobile-chat-shell.js';
@@ -133,9 +136,23 @@ export function installMobileChatShellRuntime() {
         requestBack: handleBackNavigation,
         settingsPages: mobileSettingsPages,
         preparePage,
+        saveSettings: async element => {
+            // A user acknowledgement waits for the native selection operation.
+            // Its event subscribers can save the already-published state independently.
+            let application;
+            do {
+                application = getPresetApplicationPromise();
+                await application;
+            } while (application !== getPresetApplicationPromise());
+            if (element?.id === 'vertexai_service_account_json' && element.value.trim()) await validateVertexAIServiceAccount();
+            await flushPendingSecretWrites();
+            if (await flushPendingSettingsSave(true) === false) throw new Error(translate('Settings could not be saved.'));
+        },
         subscribeChatChanged: listener => {
             const events = [event_types.CHAT_CHANGED, event_types.CHARACTER_SELECTED];
-            for (const event of events) eventSource.on(event, listener);
+            // Reveal the chat as soon as core state is ready. Awaited extension
+            // hooks can load scripts and media after the route becomes usable.
+            for (const event of events) eventSource.makeFirst(event, listener);
             return () => { for (const event of events) eventSource.removeListener(event, listener); };
         },
         translate,

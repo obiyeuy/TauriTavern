@@ -1,5 +1,7 @@
 import { mobileChatIcon as icon } from './mobile-chat-icons.js';
+import { syncAttribute, syncBooleanProperty, syncText } from './mobile-chat-dom.js';
 import { renderSettingsPage } from './mobile-settings-page.js';
+import { isComposingKeyboardEvent } from './util/keyboard-event.js';
 
 /**
  * Mobile navigation owns presentation only. Native drawers and chat history own
@@ -8,7 +10,7 @@ import { renderSettingsPage } from './mobile-settings-page.js';
 export function installMobileChatShell({
     document, getChat, busy, closePanels, showCharacters, showHistory, showPanel,
     notify, subscribeChatChanged, requestBack, translate = text => text, settingsPages = {},
-    preparePage = async () => {},
+    preparePage = async () => {}, saveSettings,
 }) {
     const body = document.body;
     const t = translate;
@@ -222,11 +224,11 @@ export function installMobileChatShell({
     }
 
     function setNavigation(open, { restoreFocus = false } = {}) {
-        body.dataset.ttNavOpen = String(open);
-        menuButton.setAttribute('aria-expanded', String(open));
-        tabs.inert = !open && !wideScreen.matches;
-        scrim.hidden = !open;
-        chatSurface.inert = open && !wideScreen.matches || view !== 'chat' || !actions.hidden;
+        syncAttribute(body, 'data-tt-nav-open', String(open));
+        syncAttribute(menuButton, 'aria-expanded', String(open));
+        syncBooleanProperty(tabs, 'inert', !open && !wideScreen.matches);
+        syncBooleanProperty(scrim, 'hidden', !open);
+        syncBooleanProperty(chatSurface, 'inert', open && !wideScreen.matches || view !== 'chat' || !actions.hidden);
         if (restoreFocus && !wideScreen.matches) (menuButton.hidden ? backButton : menuButton).focus({ preventScroll: true });
     }
 
@@ -266,50 +268,51 @@ export function installMobileChatShell({
     function render() {
         if (disposed) return;
         const chat = getChat();
-        connectButton.hidden = chat.connected !== false;
-        body.dataset.ttConnected = String(chat.connected !== false);
-        body.dataset.ttChatView = view;
-        body.dataset.ttRolesSearch = String(view === 'roles' && searchingRoles);
+        syncBooleanProperty(connectButton, 'hidden', chat.connected !== false);
+        syncAttribute(body, 'data-tt-connected', String(chat.connected !== false));
+        syncAttribute(body, 'data-tt-chat-view', view);
+        syncAttribute(body, 'data-tt-roles-search', String(view === 'roles' && searchingRoles));
         // Like Telegram, sender names only matter when several speakers share a chat.
-        body.dataset.ttGroupChat = String(Boolean(chat.group));
+        syncAttribute(body, 'data-tt-group-chat', String(Boolean(chat.group)));
         setNavigation(body.dataset.ttNavOpen === 'true');
-        more.hidden = view !== 'more';
-        pageSection.hidden = view !== 'page';
+        syncBooleanProperty(more, 'hidden', view !== 'more');
+        syncBooleanProperty(pageSection, 'hidden', view !== 'page');
         // Connection status and other native state can change behind the page.
         if (view === 'page') settingsPage?.refresh();
-        title.textContent = view === 'roles' ? t('Chats') : view === 'chat' ? chat.title || t('Choose a character')
-            : view === 'panel' || view === 'page' ? panelTitle : t(routes.find(([route]) => route === view)[1]);
-        subtitle.textContent = view === 'chat' ? chat.status : view === 'roles'
+        syncText(title, view === 'roles' ? t('Chats') : view === 'chat' ? chat.title || t('Choose a character')
+            : view === 'panel' || view === 'page' ? panelTitle : t(routes.find(([route]) => route === view)[1]));
+        syncText(subtitle, view === 'chat' ? chat.status : view === 'roles'
             ? t('Your characters, one conversation away') : view === 'history'
-                ? chat.title : view === 'panel' ? t(panels.find(([id]) => id === panelId)?.[2] || '') : '';
+                ? chat.title : view === 'panel' ? t(panels.find(([id]) => id === panelId)?.[2] || '') : '');
         // Telegram turns the app bar itself into the search field.
         const searching = view === 'roles' && searchingRoles;
-        backButton.hidden = view === 'roles' && !searching;
-        menuButton.hidden = view !== 'roles' || searching;
-        heading.hidden = searching;
-        searchInput.hidden = !searching;
-        avatar.hidden = view !== 'chat';
-        searchButton.hidden = view !== 'roles';
-        searchButton.innerHTML = icon(searchingRoles ? 'close' : 'search');
-        searchButton.setAttribute('aria-label', t(searchingRoles ? 'Close search' : 'Search'));
-        searchButton.setAttribute('aria-expanded', String(searchingRoles));
-        moreButton.hidden = view !== 'chat';
-        fab.hidden = view !== 'roles' || searchingRoles;
+        syncBooleanProperty(backButton, 'hidden', view === 'roles' && !searching);
+        syncBooleanProperty(menuButton, 'hidden', view !== 'roles' || searching);
+        syncBooleanProperty(heading, 'hidden', searching);
+        syncBooleanProperty(searchInput, 'hidden', !searching);
+        syncBooleanProperty(avatar, 'hidden', view !== 'chat');
+        syncBooleanProperty(searchButton, 'hidden', view !== 'roles');
+        if (syncAttribute(searchButton, 'aria-expanded', String(searchingRoles))) {
+            searchButton.innerHTML = icon(searchingRoles ? 'close' : 'search');
+        }
+        syncAttribute(searchButton, 'aria-label', t(searchingRoles ? 'Close search' : 'Search'));
+        syncBooleanProperty(moreButton, 'hidden', view !== 'chat');
+        syncBooleanProperty(fab, 'hidden', view !== 'roles' || searchingRoles);
         const image = chat.avatar ? `url(${JSON.stringify(chat.avatar)})` : '';
         const initial = chat.title ? [...chat.title][0].toUpperCase() : 'T';
-        avatar.textContent = image ? '' : initial;
+        syncText(avatar, image ? '' : initial);
         avatar.style.backgroundImage = image;
-        currentChat.querySelector('.tt-nav-chat-avatar').textContent = image ? '' : initial;
+        syncText(currentChat.querySelector('.tt-nav-chat-avatar'), image ? '' : initial);
         currentChat.querySelector('.tt-nav-chat-avatar').style.backgroundImage = image;
-        currentChat.querySelector('strong').textContent = chat.title || t('Choose a character');
-        currentChat.querySelector('small').textContent = chat.status;
-        currentChat.hidden = !chat.title;
-        currentHeading.hidden = !chat.title;
+        syncText(currentChat.querySelector('strong'), chat.title || t('Choose a character'));
+        syncText(currentChat.querySelector('small'), chat.status);
+        syncBooleanProperty(currentChat, 'hidden', !chat.title);
+        syncBooleanProperty(currentHeading, 'hidden', !chat.title);
+        const currentPanel = panelId.replace(/^native:/, '');
         for (const button of routeList.querySelectorAll('button')) {
-            const active = button.dataset.ttShortcut ? view === 'panel' && panelId === button.dataset.ttShortcut
-                : button.dataset.ttRoute === ((view === 'panel' || view === 'page') && !shortcutPanels.includes(panelId) ? 'more' : view);
-            if (active) button.setAttribute('aria-current', 'page');
-            else button.removeAttribute('aria-current');
+            const active = button.dataset.ttShortcut ? (view === 'panel' || view === 'page') && currentPanel === button.dataset.ttShortcut
+                : button.dataset.ttRoute === ((view === 'panel' || view === 'page') && !shortcutPanels.includes(currentPanel) ? 'more' : view);
+            syncAttribute(button, 'aria-current', active ? 'page' : null);
         }
     }
 
@@ -364,9 +367,9 @@ export function installMobileChatShell({
     async function showSettingsPage(id, signal) {
         await preparePage(id, signal);
         if (signal?.aborted) return;
-        settingsPage?.dispose();
         settingsPage = renderSettingsPage({
             document, schema: settingsPages[id], translate: t,
+            save: saveSettings,
             openNative: () => openPanel(`native:${id}`, panelTitle),
         });
         pageSection.replaceChildren(settingsPage.element);
@@ -403,21 +406,27 @@ export function installMobileChatShell({
         controller = request;
         setNavigation(false);
         closePanels();
+        settingsPage?.dispose();
+        settingsPage = undefined;
+        pageSection.replaceChildren();
         changeView(target, direction);
         const action = target.view === 'roles' ? showCharacters
             : target.view === 'history' ? showHistory
                 : target.view === 'panel' ? signal => showPanel(target.panelId, signal)
                     : target.view === 'page' ? signal => showSettingsPage(target.panelId, signal) : null;
         message(action ? t('Loading…') : '');
+        pageSection.setAttribute('aria-busy', String(target.view === 'page'));
         render();
         try {
             if (action) await action(request.signal);
             if (disposed || ticket !== operation) return;
             message('');
+            pageSection.setAttribute('aria-busy', 'false');
             render();
             if (changed) title.focus({ preventScroll: true });
         } catch (error) {
             if (disposed || ticket !== operation || request.signal.aborted) return;
+            pageSection.setAttribute('aria-busy', 'false');
             closePanels();
             if (changed && !recovering) {
                 trail.splice(0, trail.length, ...previousTrail);
@@ -502,6 +511,7 @@ export function installMobileChatShell({
     const resizeNavigation = () => setNavigation(false);
     wideScreen.addEventListener('change', resizeNavigation);
     const onKeyDown = event => {
+        if (isComposingKeyboardEvent(event)) return;
         if (event.key === 'Escape' && !actions.hidden) {
             event.preventDefault();
             event.stopImmediatePropagation();
@@ -559,6 +569,7 @@ export function installMobileChatShell({
     }
     searchInput.addEventListener('input', syncSearch);
     searchInput.addEventListener('keydown', event => {
+        if (isComposingKeyboardEvent(event)) return;
         if (event.key === 'Enter') searchInput.blur();
         if (event.key !== 'Escape') return;
         event.preventDefault();

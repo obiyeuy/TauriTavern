@@ -482,7 +482,7 @@ async fn character_service_replacement_adopts_the_new_lorebook_and_keeps_local_e
             .await
             .expect("read adopted lorebook")
             .expect("adopted lorebook exists")
-            .pointer("/entries/0/content"),
+            .pointer("/entries/1/content"),
         Some(&json!("new version"))
     );
     let _ = fs::remove_dir_all(root).await;
@@ -718,7 +718,7 @@ async fn character_service_updates_the_linked_copy_without_overwriting_the_base_
             .await
             .expect("read updated copy")
             .expect("updated copy exists")
-            .pointer("/entries/0/content"),
+            .pointer("/entries/1/content"),
         Some(&json!("incoming content"))
     );
 

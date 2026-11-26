@@ -40,8 +40,6 @@ where
     move |error| {
         let error_text = error.to_string();
         let command_error: CommandError = error.into();
-        let message = format!("{}: {}", context, error_text);
-
         if should_log_as_warning(&command_error) {
             tracing::warn!(
                 target: crate::observability_targets::COMMAND,
@@ -50,7 +48,13 @@ where
                 "Command returned expected failure",
             );
         } else {
-            log_user_visible_error(&message);
+            // The command returns this failure to its caller, which owns its presentation.
+            tracing::error!(
+                target: crate::observability_targets::COMMAND,
+                context = %context,
+                error = %error_text,
+                "Command failed",
+            );
         }
 
         command_error

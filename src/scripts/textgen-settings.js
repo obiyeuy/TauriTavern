@@ -3,6 +3,7 @@ import { initSortableList } from './sortable-list.js';
 import { toUserFacingErrorText } from './util/user-facing-error.js';
 import {
     abortStatusCheck,
+    cancelStatusCheck,
     eventSource,
     event_types,
     getRequestHeaders,
@@ -29,7 +30,6 @@ import { SECRET_KEYS, readSecretState, writeSecret } from './secrets.js';
 import { getEventSourceStream } from './sse-stream.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, loadAphroditeModels, loadDreamGenModels, loadFeatherlessModels, loadGenericModels, loadInfermaticAIModels, loadLlamaCppModels, loadMancerModels, loadOllamaModels, loadOpenRouterModels, loadTabbyModels, loadTogetherAIModels, loadVllmModels, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { ENCODE_TOKENIZERS, TEXTGEN_TOKENIZERS, TOKENIZER_SUPPORTED_KEY, getTextTokens, getTokenizerBestMatch, tokenizers } from './tokenizers.js';
-import { AbortReason } from './util/AbortReason.js';
 import { onlyUnique, arraysEqual, isObject } from './utils.js';
 
 export const textgen_types = {
@@ -327,11 +327,15 @@ export const setting_names = [
 
 const DYNATEMP_BLOCK = document.getElementById('dynatemp_block_ooba');
 
+/**
+ * Validates the active URL input and commits its formatted value.
+ * @returns {boolean} Whether the URL input permits a connection attempt
+ */
 export function validateTextGenUrl() {
     const selector = SERVER_INPUTS[textgenerationwebui_settings.type];
 
     if (!selector) {
-        return;
+        return true;
     }
 
     const control = $(selector);
@@ -340,10 +344,11 @@ export function validateTextGenUrl() {
 
     if (!formattedUrl) {
         toastr.error(t`Enter a valid API URL`, 'Text Completion API');
-        return;
+        return false;
     }
 
-    control.val(formattedUrl);
+    control.val(formattedUrl).trigger('input');
+    return true;
 }
 
 /**
@@ -441,7 +446,7 @@ function getTokenizerForTokenIds() {
  * @typedef {{banned_tokens: string, banned_strings: string[]}} TokenBanResult
  * @returns {TokenBanResult} String with comma-separated banned token IDs
  */
-function getCustomTokenBans(settings = null) {
+function getCustomTokenBans(settings = null, { substitute = substituteParams } = {}) {
     settings = settings ?? textgenerationwebui_settings;
     if (!settings.send_banned_tokens || (!settings.banned_tokens && !settings.global_banned_tokens && !textgenerationwebui_banned_in_macros.length)) {
         return {
@@ -459,7 +464,7 @@ function getCustomTokenBans(settings = null) {
         .concat(textgenerationwebui_banned_in_macros)
         .filter(x => x.length > 0)
         .filter(onlyUnique)
-        .map(x => substituteParams(x));
+        .map(x => substitute(x));
 
     //debug
     if (textgenerationwebui_banned_in_macros.length) {
@@ -570,7 +575,13 @@ export async function loadTextGenSettings(data, loadedSettings, adjustments = []
     for (const [type, selector] of Object.entries(SERVER_INPUTS)) {
         const control = $(selector);
         control.val(textgenerationwebui_settings.server_urls[type] ?? '').on('input', function () {
-            textgenerationwebui_settings.server_urls[type] = String($(this).val()).trim();
+            const value = String($(this).val()).trim();
+            if (textgenerationwebui_settings.server_urls[type] !== value) {
+                textgenerationwebui_settings.server_urls[type] = value;
+                if (main_api === 'textgenerationwebui' && type === textgenerationwebui_settings.type) {
+                    cancelStatusCheck('Text Completion endpoint changed');
+                }
+            }
             saveSettingsDebounced();
         });
     }
@@ -662,6 +673,7 @@ function sortAphroditeItemsByOrder(orderArray) {
 }
 
 async function getStatusTextgen() {
+    const signal = abortStatusCheck.signal;
     const url = '/api/backends/text-completions/status';
 
     const endpoint = getTextGenServer();
@@ -688,10 +700,11 @@ async function getStatusTextgen() {
                 api_server: endpoint,
                 api_type: textgenerationwebui_settings.type,
             }),
-            signal: abortStatusCheck.signal,
+            signal,
         });
 
         const data = await response.json();
+        if (signal.aborted) return;
 
         if (textgenerationwebui_settings.type === textgen_types.MANCER) {
             loadMancerModels(data?.data);
@@ -763,10 +776,12 @@ async function getStatusTextgen() {
                     api_type: textgenerationwebui_settings.type,
                     model: model,
                 }),
+                signal,
             });
 
             if (response.ok) {
                 const data = await response.json();
+                if (signal.aborted) return;
                 if (data) {
                     const { chat_template, chat_template_hash } = data;
                     power_user.chat_template_hash = chat_template_hash;
@@ -792,6 +807,7 @@ async function getStatusTextgen() {
                     console.log(`We have chat template ${chat_template.split('\n')[0]}...`);
                     const savedTemplate = power_user.model_templates_mappings[chat_template_hash];
                     const derivedTemplate = await deriveTemplatesFromChatTemplate(chat_template, chat_template_hash);
+                    if (signal.aborted) return;
                     const { context, instruct } = savedTemplate ?? derivedTemplate;
 
                     if (wantsContextDerivation && context) {
@@ -809,15 +825,12 @@ async function getStatusTextgen() {
             toastr.error(data.response, t`API Error`, { timeOut: 5000, preventDuplicates: true });
         }
     } catch (err) {
-        if (err instanceof AbortReason) {
-            console.info('Status check aborted.', err.reason);
-        } else {
-            console.error('Error getting status', err);
-
-        }
+        if (signal.aborted) return;
+        console.error('Error getting status', err);
         setOnlineStatus('no_connection');
     }
 
+    if (signal.aborted) return;
     return resultCheckStatus();
 }
 
@@ -1051,9 +1064,13 @@ export function initTextGenSettings() {
 
     $('#api_button_textgenerationwebui').on('click', async function (e) {
         if (isConnectionValidationSuspended()) return;
+        let signal;
 
         try {
+            if (!validateTextGenUrl()) return;
+            signal = abortStatusCheck.signal;
             await readSecretState();
+            if (signal.aborted) return;
             const keys = [
                 { id: 'api_key_mancer', secret: SECRET_KEYS.MANCER },
                 { id: 'api_key_vllm', secret: SECRET_KEYS.VLLM },
@@ -1075,16 +1092,16 @@ export function initTextGenSettings() {
                 const keyValue = String($(`#${key.id}`).val()).trim();
                 if (keyValue.length) {
                     await writeSecret(key.secret, keyValue);
+                    if (signal.aborted) return;
                 }
             }
 
-            validateTextGenUrl();
             startStatusLoading();
             saveSettingsDebounced();
             await getStatusTextgen();
         } catch (error) {
             toastr.error(toUserFacingErrorText(error));
-            resultCheckStatus();
+            if (signal && !signal.aborted) resultCheckStatus();
         }
     });
 }
@@ -1506,7 +1523,7 @@ export function getLogprobsNumber(type = null) {
  * @param {string} str Input string
  * @returns {string} Output string
  */
-export function replaceMacrosInList(str) {
+export function replaceMacrosInList(str, { substitute = substituteParams } = {}) {
     if (!str || typeof str !== 'string') {
         return str;
     }
@@ -1517,13 +1534,13 @@ export function replaceMacrosInList(str) {
             throw new Error('Not an array');
         }
         for (let i = 0; i < array.length; i++) {
-            array[i] = substituteParams(array[i]);
+            array[i] = substitute(array[i]);
         }
         return JSON.stringify(array);
     } catch {
         const array = str.split(',');
         for (let i = 0; i < array.length; i++) {
-            array[i] = substituteParams(array[i]);
+            array[i] = substitute(array[i]);
         }
         return array.join(',');
     }
@@ -1541,13 +1558,13 @@ export function replaceMacrosInList(str) {
  * @param {string} type Request type (impersonate, quiet, continue, etc)
  * @returns {object} Final generation parameters object appropriate for the text completion source
  */
-export function createTextGenGenerationData(settings, model, finalPrompt = null, maxTokens = null, isImpersonate = false, isContinue = false, cfgValues = null, type = 'quiet') {
+export function createTextGenGenerationData(settings, model, finalPrompt = null, maxTokens = null, isImpersonate = false, isContinue = false, cfgValues = null, type = 'quiet', { substitute = substituteParams } = {}) {
     settings = settings ?? textgenerationwebui_settings;
     model = model ?? getTextGenModel(settings);
 
     const canMultiSwipe = !isContinue && !isImpersonate && type !== 'quiet';
     const dynatemp = isDynamicTemperatureSupported(settings);
-    const { banned_tokens, banned_strings } = getCustomTokenBans(settings);
+    const { banned_tokens, banned_strings } = getCustomTokenBans(settings, { substitute });
     const jsonSchema = isObject(settings.json_schema)
         ? settings.json_schema_allow_empty
             ? settings.json_schema
@@ -1588,13 +1605,13 @@ export function createTextGenGenerationData(settings, model, finalPrompt = null,
         'dry_allowed_length': settings.dry_allowed_length,
         'dry_multiplier': settings.dry_multiplier,
         'dry_base': settings.dry_base,
-        'dry_sequence_breakers': replaceMacrosInList(settings.dry_sequence_breakers),
+        'dry_sequence_breakers': replaceMacrosInList(settings.dry_sequence_breakers, { substitute }),
         'dry_penalty_last_n': settings.dry_penalty_last_n,
         'max_tokens_second': settings.max_tokens_second,
         'sampler_priority': settings.type === OOBA ? settings.sampler_priority : undefined,
         'samplers': settings.type === LLAMACPP ? settings.samplers : undefined,
-        'stopping_strings': getStoppingStrings(isImpersonate, isContinue),
-        'stop': getStoppingStrings(isImpersonate, isContinue),
+        'stopping_strings': getStoppingStrings(isImpersonate, isContinue, 'textgenerationwebui', { substitute }),
+        'stop': getStoppingStrings(isImpersonate, isContinue, 'textgenerationwebui', { substitute }),
         'truncation_length': max_context,
         'ban_eos_token': settings.ban_eos_token,
         'skip_special_tokens': settings.skip_special_tokens,
@@ -1644,7 +1661,7 @@ export function createTextGenGenerationData(settings, model, finalPrompt = null,
         'do_sample': settings.type === OOBA ? settings.do_sample : undefined,
         'seed': settings.seed >= 0 ? settings.seed : undefined,
         'guidance_scale': cfgValues?.guidanceScale?.value ?? settings.guidance_scale ?? 1,
-        'negative_prompt': cfgValues?.negativePrompt ?? substituteParams(settings.negative_prompt) ?? '',
+        'negative_prompt': cfgValues?.negativePrompt ?? substitute(settings.negative_prompt) ?? '',
         'grammar_string': settings.grammar_string || undefined,
         'json_schema': [TABBY, LLAMACPP].includes(settings.type) ? jsonSchema : undefined,
         // llama.cpp aliases. In case someone wants to use LM Studio as Text Completion API
@@ -1670,7 +1687,7 @@ export function createTextGenGenerationData(settings, model, finalPrompt = null,
         'presence_penalty': settings.presence_pen,
         'repetition_penalty': settings.rep_pen,
         'seed': settings.seed >= 0 ? settings.seed : undefined,
-        'stop': getStoppingStrings(isImpersonate, isContinue),
+        'stop': getStoppingStrings(isImpersonate, isContinue, 'textgenerationwebui', { substitute }),
         'temperature': dynatemp ? (settings.min_temp + settings.max_temp) / 2 : settings.temp,
         'temperature_last': settings.temperature_last,
         'top_p': settings.top_p,
@@ -1796,9 +1813,9 @@ export function createTextGenGenerationData(settings, model, finalPrompt = null,
     return params;
 }
 
-export async function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, isContinue, cfgValues, type) {
+export async function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, isContinue, cfgValues, type, { substitute = substituteParams } = {}) {
     const model = getTextGenModel(textgenerationwebui_settings);
-    const params = createTextGenGenerationData(textgenerationwebui_settings, model, finalPrompt, maxTokens, isImpersonate, isContinue, cfgValues, type);
+    const params = createTextGenGenerationData(textgenerationwebui_settings, model, finalPrompt, maxTokens, isImpersonate, isContinue, cfgValues, type, { substitute });
     await eventSource.emit(event_types.TEXT_COMPLETION_SETTINGS_READY, params);
     return params;
 }

@@ -170,7 +170,8 @@ test('Space commits once on release and cancellation, composition, modifiers or 
         action.focus();
         key(action, 'keyup', ' ');
         assert.equal(clicks, 1);
-        for (const options of [{ isComposing: true }, { altKey: true }, { ctrlKey: true }, { shiftKey: true }, { metaKey: true }]) {
+        for (const options of [{ isComposing: true }, { isComposing: false, keyCode: 229 },
+            { altKey: true }, { ctrlKey: true }, { shiftKey: true }, { metaKey: true }]) {
             key(action, 'keydown', 'Enter', options);
             key(action, 'keydown', ' ', options);
             key(action, 'keyup', ' ', options);

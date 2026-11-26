@@ -1,5 +1,7 @@
 import { getPageForItem, initPagination } from './pagination.js';
 import { loadPersonaSnapshot } from './tauri/setting/settings-persistence.js';
+import { requireOkResponse } from './util/command-error-utils.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 import {
     buildAvatarList,
     characterToEntity,
@@ -403,39 +405,47 @@ async function changeUserAvatar(e) {
         return;
     }
 
-    const formData = new FormData(form);
-    const dataUrl = await getBase64Async(file);
-    let url = '/api/avatars/upload';
+    let formData;
+    let data;
+    try {
+        formData = new FormData(form);
+        const dataUrl = await getBase64Async(file);
+        let url = '/api/avatars/upload';
 
-    if (!power_user.never_resize_avatars) {
-        const dlg = new Popup(t`Set the crop position of the avatar image`, POPUP_TYPE.CROP, '', { label: t`Set the crop position of the avatar image`, cropImage: dataUrl });
-        const result = await dlg.show();
-
-        if (!result) {
-            return;
+        if (!power_user.never_resize_avatars) {
+            const dlg = new Popup(t`Set the crop position of the avatar image`, POPUP_TYPE.CROP, '', { label: t`Set the crop position of the avatar image`, cropImage: dataUrl });
+            const result = await dlg.show();
+            if (!result) {
+                form.reset();
+                return;
+            }
+            if (dlg.cropData !== undefined) {
+                url += `?crop=${encodeURIComponent(JSON.stringify(dlg.cropData))}`;
+            }
         }
 
-        if (dlg.cropData !== undefined) {
-            url += `?crop=${encodeURIComponent(JSON.stringify(dlg.cropData))}`;
+        const rawFile = formData.get('avatar');
+        if (rawFile instanceof File) {
+            const convertedFile = await ensureImageFormatSupported(rawFile);
+            formData.set('avatar', convertedFile);
         }
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+            cache: 'no-cache',
+            body: formData,
+        });
+        await requireOkResponse(response, 'Upload avatar');
+        data = await response.json();
+    } catch (error) {
+        console.error('Failed to upload avatar:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not upload avatar`);
+        form.reset();
+        return;
     }
 
-    const rawFile = formData.get('avatar');
-    if (rawFile instanceof File) {
-        const convertedFile = await ensureImageFormatSupported(rawFile);
-        formData.set('avatar', convertedFile);
-    }
-
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: getRequestHeaders({ omitContentType: true }),
-        cache: 'no-cache',
-        body: formData,
-    });
-
-    if (response.ok) {
-        const data = await response.json();
-
+    try {
         const overwriteName = formData.get('overwrite_name');
         const dataPath = data?.path;
 
@@ -457,10 +467,13 @@ async function changeUserAvatar(e) {
         }
 
         await getUserAvatars(true, dataPath || overwriteName);
+    } catch (error) {
+        console.error('Avatar was uploaded but could not be refreshed:', error);
+        toastr.warning(toUserFacingErrorText(error), t`Avatar uploaded, but could not be refreshed`);
+    } finally {
+        // Allow selecting the same file again after either outcome.
+        form.reset();
     }
-
-    // Will allow to select the same file twice in a row
-    form.reset();
 }
 
 /**
@@ -1160,9 +1173,7 @@ async function deletePersona(avatarId, { silent = false } = {}) {
         }),
     });
 
-    if (!request.ok) {
-        throw new Error(`Failed to delete persona: ${request.statusText}`);
-    }
+    await requireOkResponse(request, 'Delete persona');
 
     console.log(`Deleted avatar ${avatarId}`);
     delete power_user.personas[avatarId];
@@ -1193,7 +1204,12 @@ async function deletePersona(avatarId, { silent = false } = {}) {
 }
 
 async function deleteUserAvatar() {
-    await deletePersona(user_avatar);
+    try {
+        await deletePersona(user_avatar);
+    } catch (error) {
+        console.error('Failed to delete avatar:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not delete avatar`);
+    }
 }
 
 async function onPersonaDescriptionInput() {

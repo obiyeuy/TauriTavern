@@ -5,17 +5,17 @@ body.tt-mobile-chat-shell {
     --tt-surface: #fff;
     --tt-field: #f0f3f7;
     --tt-text: #222;
-    --tt-muted: #7d858c;
+    --tt-muted: #626c76;
     --tt-line: #e6e8ea;
     --tt-accent: #2278b8;
     --tt-accent-soft: #e5f2fc;
-    --tt-bar: #517da2;
+    --tt-bar: #4b769a;
     --tt-bar-text: #fff;
     --tt-wallpaper: #dde7d2;
     --tt-incoming: #fff;
     --tt-outgoing: #effdde;
-    --tt-time: #a1aab3;
-    --tt-time-out: #6cba5d;
+    --tt-time: #64707c;
+    --tt-time-out: #427438;
     --tt-icon: #6a7d8b;
     --tt-shadow: 0 1px 1px #1023321f;
     --tt-teal: #27776b;
@@ -31,6 +31,8 @@ body.tt-mobile-chat-shell {
     --tt-sidebar: 0px;
     --tt-motion-press: 120ms;
     --tt-motion-page: 220ms;
+    --tt-font-body: max(16px, var(--mainFontSize));
+    --tt-font-small: max(14px, calc(var(--mainFontSize) * .875));
     --tt-ease: cubic-bezier(.2,.8,.2,1);
     --tt-shell-header-height: calc(56px + var(--tt-inset-top, 0px));
     --tt-shell-tabs-height: 0px;
@@ -70,8 +72,8 @@ body.tt-mobile-chat-shell[data-tt-color-scheme="night"] {
     --tt-wallpaper: #0e1621;
     --tt-incoming: #182533;
     --tt-outgoing: #2b5278;
-    --tt-time: #6d8396;
-    --tt-time-out: #7da8d3;
+    --tt-time: #9bb0c3;
+    --tt-time-out: #b5cfe9;
     --tt-icon: #7f91a4;
     --tt-shadow: 0 1px 2px #0003;
     --tt-teal: #8dcbbd;
@@ -100,9 +102,7 @@ body.tt-mobile-chat-shell :is(#tt-chat-header, #tt-chat-tabs, #tt-more-panel, #t
 body.tt-mobile-chat-shell #tt-settings-page[hidden] {
     display: none !important;
 }
-/* Keep the native wallpaper pipeline alive. The chat surface adds a light
- * tint and doodles above it, so a selected background remains visible without
- * sacrificing message contrast. */
+/* The native background module owns wallpaper, including chat locks and video. */
 body.tt-mobile-chat-shell #bg1 {
     visibility: visible; z-index: 0; pointer-events: none;
 }
@@ -157,7 +157,7 @@ body.tt-mobile-chat-shell .tt-chat-heading h1 {
     font-weight: 500; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .1px;
 }
 body.tt-mobile-chat-shell .tt-chat-heading > span {
-    display: block; overflow: hidden; color: #ffffffb8; font-size: 13.5px; line-height: 18px;
+    display: block; overflow: hidden; color: var(--tt-bar-text); font-size: 13.5px; line-height: 18px;
     text-overflow: ellipsis; white-space: nowrap;
 }
 body.tt-mobile-chat-shell .tt-chat-heading > span:empty { display: none; }
@@ -231,7 +231,7 @@ body.tt-mobile-chat-shell #tt-nav-profile-avatar {
     border-radius: 50%; background: #c5e4f2; color: #2b668f; font-size: 27px; font-weight: 500;
 }
 body.tt-mobile-chat-shell #tt-nav-profile strong { font-size: 15px; line-height: 20px; font-weight: 600; }
-body.tt-mobile-chat-shell #tt-nav-profile small { margin-top: 2px; color: #ffffffcc; font-size: 13px; line-height: 18px; }
+body.tt-mobile-chat-shell #tt-nav-profile small { margin-top: 2px; color: var(--tt-bar-text); font-size: 13px; line-height: 18px; }
 body.tt-mobile-chat-shell #tt-nav-profile #tt-nav-theme {
     position: absolute; right: 12px; top: calc(16px + var(--tt-inset-top, 0px));
     display: grid; place-items: center; width: 48px; height: 48px; padding: 0;
@@ -272,8 +272,7 @@ body.tt-mobile-chat-shell #sheld {
     width: calc(100% - var(--tt-sidebar)) !important; max-width: none; min-height: 0;
     height: var(--tt-shell-content-height) !important; max-height: var(--tt-shell-content-height) !important;
     margin: 0; border: 0; border-radius: 0; box-shadow: none;
-    background-color: color-mix(in srgb, var(--tt-wallpaper) 72%, transparent);
-    background-image: url('../img/chat-doodles.svg'); background-repeat: repeat; background-size: 300px;
+    background: transparent;
     backdrop-filter: none; -webkit-backdrop-filter: none; text-shadow: none;
 }
 body.tt-mobile-chat-shell[data-tt-chat-view]:not([data-tt-chat-view="chat"]) #sheld { visibility: hidden; }
@@ -836,14 +835,20 @@ body.tt-mobile-chat-shell #tt-settings-page {
     color: var(--tt-text); background: var(--tt-bg); animation: tt-page-enter var(--tt-motion-page) var(--tt-ease);
 }
 body.tt-mobile-chat-shell #tt-settings-page * { box-sizing: border-box; }
+/* A settings editor owns the modal layer; its page must paint above the app
+ * bar as well as the other page content when the viewport is short. */
+body.tt-mobile-chat-shell #tt-settings-page:has(.tt-sp-sheet:not([hidden])) { z-index: 4100; }
+body.tt-mobile-chat-shell .tt-sp-intro { margin: 0; padding: 16px 20px; color: var(--tt-muted); font-size: var(--tt-font-small); line-height: 1.5; overflow-wrap: anywhere; }
 body.tt-mobile-chat-shell .tt-sp-group { margin: 0 0 10px; padding: 4px 0; background: var(--tt-surface); box-shadow: 0 1px 1px #10233212; }
-body.tt-mobile-chat-shell .tt-sp-group h2 {
+body.tt-mobile-chat-shell .tt-sp-group :is(h2, summary) {
     margin: 0; padding: 12px 20px 6px; color: var(--tt-accent); font-size: 15px; line-height: 20px; font-weight: 500;
 }
+body.tt-mobile-chat-shell .tt-sp-group summary { min-height: 48px; cursor: pointer; }
+body.tt-mobile-chat-shell .tt-sp-group summary:focus-visible { outline: 2px solid var(--tt-accent); outline-offset: -2px; }
 body.tt-mobile-chat-shell .tt-sp-row {
     position: relative; display: flex; align-items: center; gap: 16px; width: 100%; min-height: 52px;
     margin: 0; padding: 8px 20px; border: 0; border-radius: 0; color: var(--tt-text); background: transparent;
-    font: inherit; font-size: 16px; line-height: 22px; text-align: left; cursor: pointer; touch-action: manipulation;
+    font: inherit; font-size: var(--tt-font-body); line-height: 1.4; text-align: left; cursor: pointer; touch-action: manipulation;
     transition: background-color 140ms ease;
 }
 body.tt-mobile-chat-shell .tt-sp-row:is(button):active { background: var(--tt-field); }
@@ -854,9 +859,10 @@ body.tt-mobile-chat-shell .tt-sp-row + .tt-sp-row::before {
 }
 body.tt-mobile-chat-shell .tt-sp-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 body.tt-mobile-chat-shell .tt-sp-value {
-    flex: 0 1 auto; max-width: 45%; overflow: hidden; color: var(--tt-accent); font-size: 15px;
+    flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; color: var(--tt-accent); font-size: var(--tt-font-small);
     text-overflow: ellipsis; white-space: nowrap;
 }
+body.tt-mobile-chat-shell .tt-sp-select .tt-sp-value { white-space: normal; overflow-wrap: anywhere; text-align: right; }
 body.tt-mobile-chat-shell .tt-sp-link svg { width: 18px; height: 18px; color: var(--tt-muted); }
 body.tt-mobile-chat-shell .tt-sp-switch {
     position: relative; flex: 0 0 36px; width: 36px; height: 14px; border-radius: 7px;
@@ -873,7 +879,7 @@ body.tt-mobile-chat-shell .tt-sp-slider input[type="range"] {
     /* Telegram slider: thin track, accent fill up to a round thumb. The global
      * theme styles ranges heavily, so reset everything here. */
     --tt-fill: 50%;
-    flex: 1 0 100%; width: 100%; height: 28px; min-height: 0; margin: 0; padding: 0;
+    flex: 1 0 100%; width: 100%; height: 48px; min-height: 48px; margin: 0; padding: 0;
     border: 0 !important; border-radius: 0; box-shadow: none !important; outline: none;
     background: transparent !important; -webkit-appearance: none; appearance: none; cursor: pointer;
 }
@@ -893,30 +899,52 @@ body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]::-moz-range-thumb {
     width: 18px; height: 18px; border: 0; border-radius: 50%; background: var(--tt-primary);
 }
 body.tt-mobile-chat-shell .tt-sp-slider input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 6px color-mix(in srgb, var(--tt-primary) 25%, transparent); }
-body.tt-mobile-chat-shell .tt-sp-slider .tt-sp-value { color: var(--tt-muted); }
+body.tt-mobile-chat-shell .tt-sp-slider button.tt-sp-value {
+    min-width: 64px; min-height: 48px; padding: 4px 10px; border: 0; border-radius: 8px;
+    color: var(--tt-accent); background: var(--tt-field); font: inherit; font-size: var(--tt-font-body);
+    cursor: pointer; touch-action: manipulation;
+}
+body.tt-mobile-chat-shell .tt-sp-slider button.tt-sp-value:focus-visible,
+body.tt-mobile-chat-shell .tt-sp-option:focus-visible,
+body.tt-mobile-chat-shell .tt-sp-actions button:focus-visible {
+    outline: 2px solid var(--tt-accent); outline-offset: -2px;
+}
+body.tt-mobile-chat-shell .tt-sp-slider button.tt-sp-value:disabled { opacity: .45; cursor: default; }
 body.tt-mobile-chat-shell .tt-sp-footer {
     margin: -4px 0 16px; padding: 0 20px; color: var(--tt-muted); font-size: 13px; line-height: 18px;
 }
 body.tt-mobile-chat-shell .tt-sp-text .tt-sp-value { max-width: 55%; color: var(--tt-muted); }
-body.tt-mobile-chat-shell .tt-sp-value.tt-sp-empty { color: var(--tt-muted); opacity: .7; }
+body.tt-mobile-chat-shell .tt-sp-value.tt-sp-empty { color: var(--tt-muted); opacity: 1; }
 body.tt-mobile-chat-shell .tt-sp-action .tt-sp-label { color: var(--tt-accent); font-weight: 500; }
 body.tt-mobile-chat-shell .tt-sp-status { cursor: default; }
-body.tt-mobile-chat-shell .tt-sp-status .tt-sp-value { max-width: 60%; color: var(--tt-muted); white-space: normal; text-align: right; }
-body.tt-mobile-chat-shell .tt-sp-note { margin: 0; padding: 4px 20px 10px; color: var(--tt-muted); font-size: 13px; line-height: 18px; }
+body.tt-mobile-chat-shell .tt-sp-status .tt-sp-value { max-width: 60%; color: var(--tt-muted); white-space: normal; overflow-wrap: anywhere; text-align: right; }
+body.tt-mobile-chat-shell .tt-sp-note { margin: 0; padding: 4px 20px 10px; color: var(--tt-muted); font-size: var(--tt-font-small); line-height: 1.5; overflow-wrap: anywhere; }
 body.tt-mobile-chat-shell .tt-sp-filter,
 body.tt-mobile-chat-shell .tt-sp-field {
-    display: block; width: calc(100% - 48px); margin: 4px 24px 12px; padding: 8px 0; min-height: 40px;
+    display: block; width: calc(100% - 48px); min-width: 0; max-width: calc(100% - 48px); margin: 4px 24px 12px; padding: 8px 0; min-height: 44px;
     color: var(--tt-text); background: transparent; border: 0; border-bottom: 2px solid var(--tt-primary);
-    border-radius: 0; box-shadow: none; outline: none; font: inherit; font-size: 16px;
+    border-radius: 0; box-shadow: none; outline: none; font: inherit; font-size: var(--tt-font-body);
+}
+body.tt-mobile-chat-shell :is(.tt-sp-filter, .tt-sp-field):focus-visible {
+    outline: 2px solid var(--tt-accent); outline-offset: 3px;
 }
 body.tt-mobile-chat-shell textarea.tt-sp-field { min-height: 120px; resize: vertical; }
-body.tt-mobile-chat-shell .tt-sp-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 4px 12px 2px; }
+body.tt-mobile-chat-shell textarea.tt-sp-address { min-height: 80px; overflow-wrap: anywhere; word-break: break-all; }
+body.tt-mobile-chat-shell :is(.tt-sp-edit-help, .tt-sp-edit-error) { margin: 4px 24px 12px; font-size: var(--tt-font-small); line-height: 1.5; overflow-wrap: anywhere; }
+body.tt-mobile-chat-shell .tt-sp-edit-help { color: var(--tt-muted); }
+body.tt-mobile-chat-shell .tt-sp-edit-error { color: var(--tt-danger); }
+body.tt-mobile-chat-shell .tt-sp-edit-error[hidden] { display: none; }
+body.tt-mobile-chat-shell .tt-sp-actions {
+    display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 8px; padding: 4px 12px 2px;
+    border-top: 1px solid var(--tt-line); background: var(--tt-surface);
+}
 body.tt-mobile-chat-shell .tt-sp-actions[hidden] { display: none; }
 body.tt-mobile-chat-shell .tt-sp-actions button {
-    min-width: 64px; min-height: 40px; margin: 0; padding: 0 12px; border: 0; border-radius: 4px;
-    color: var(--tt-accent); background: transparent; font: inherit; font-size: 15px; font-weight: 500; text-transform: uppercase; cursor: pointer;
+    min-width: 64px; min-height: 48px; margin: 0; padding: 0 12px; border: 0; border-radius: 4px;
+    color: var(--tt-accent); background: transparent; font: inherit; font-size: var(--tt-font-body); font-weight: 500; cursor: pointer;
 }
 body.tt-mobile-chat-shell .tt-sp-actions button:active { background: var(--tt-field); }
+body.tt-mobile-chat-shell .tt-sp-actions button:disabled { opacity: .5; cursor: wait; }
 body.tt-mobile-chat-shell .tt-sp-pick { gap: 14px; min-height: 64px; padding-block: 8px; }
 body.tt-mobile-chat-shell .tt-sp-pick + .tt-sp-row::before,
 body.tt-mobile-chat-shell .tt-sp-row + .tt-sp-pick::before { left: 82px; }
@@ -939,22 +967,31 @@ body.tt-mobile-chat-shell .tt-sp-option[aria-checked="true"] .tt-sp-box {
     border-color: var(--tt-primary);
     background: var(--tt-primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 12.5 4 4 8-9'/%3E%3C/svg%3E") center/14px no-repeat;
 }
-body.tt-mobile-chat-shell .tt-sp-sheet { position: fixed; z-index: 4100; inset: 0; display: grid; place-items: center; padding: 24px; }
+body.tt-mobile-chat-shell .tt-sp-sheet { position: fixed; z-index: 4100; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 16px; }
 body.tt-mobile-chat-shell .tt-sp-sheet[hidden] { display: none; }
 body.tt-mobile-chat-shell .tt-sp-sheet-scrim {
     position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; background: #0006;
 }
 body.tt-mobile-chat-shell .tt-sp-dialog {
-    position: relative; width: min(340px, 100%); max-height: min(70vh, 560px); overflow-y: auto;
+    display: flex; flex-direction: column;
+    position: relative; width: min(360px, 100%); min-width: 0; max-height: min(70vh, 560px); max-height: min(calc(100dvh - 32px), 560px); overflow-y: auto;
     padding: 18px 0 8px; color: var(--tt-text); background: var(--tt-surface); border-radius: 8px;
-    box-shadow: 0 8px 32px #0004; animation: tt-dialog-in 170ms var(--tt-ease);
+    box-shadow: 0 8px 32px #0004; animation: tt-dialog-in var(--tt-motion-page) var(--tt-ease);
 }
-body.tt-mobile-chat-shell .tt-sp-dialog h3 { margin: 0 0 8px; padding: 0 24px; font-size: 19px; line-height: 26px; font-weight: 500; }
+body.tt-mobile-chat-shell .tt-sp-dialog h3 { flex: 0 0 auto; margin: 0 0 8px; padding: 0 24px; font-size: max(19px, var(--mainFontSize)); line-height: 1.4; font-weight: 500; overflow-wrap: anywhere; }
+body.tt-mobile-chat-shell .tt-sp-sheet-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+body.tt-mobile-chat-shell .tt-sp-edit-error { min-height: 0; max-height: min(25dvh, 120px); overflow-y: auto; }
+body.tt-mobile-chat-shell .tt-sp-options-empty { margin: 12px 24px 20px; color: var(--tt-muted); font-size: 14px; line-height: 22px; }
+body.tt-mobile-chat-shell .tt-sp-options-empty[hidden] { display: none; }
 body.tt-mobile-chat-shell .tt-sp-option {
     display: flex; align-items: center; gap: 20px; width: 100%; min-height: 48px; margin: 0; padding: 0 24px;
-    border: 0; border-radius: 0; color: inherit; background: transparent; font: inherit; font-size: 16px; text-align: left; cursor: pointer;
+    border: 0; border-radius: 0; color: inherit; background: transparent; font: inherit; font-size: var(--tt-font-body); text-align: left; cursor: pointer;
 }
 body.tt-mobile-chat-shell .tt-sp-option:active { background: var(--tt-field); }
+body.tt-mobile-chat-shell .tt-sp-option > span:last-child { min-width: 0; overflow-wrap: anywhere; padding-block: 10px; }
+body.tt-mobile-chat-shell .tt-sp-option-help { display: block; margin-top: 6px; color: var(--tt-muted); font-size: var(--tt-font-small); line-height: 1.5; }
+body.tt-mobile-chat-shell .tt-sp-option:disabled { opacity: .6; cursor: default; }
+body.tt-mobile-chat-shell .tt-sp-option[hidden] { display: none; }
 body.tt-mobile-chat-shell .tt-sp-radio {
     flex: 0 0 20px; width: 20px; height: 20px; border: 2px solid var(--tt-muted); border-radius: 50%;
 }
@@ -976,4 +1013,16 @@ body.tt-mobile-chat-shell .tt-sp-option[aria-checked="true"] .tt-sp-radio {
 @keyframes tt-dialog-in {
     from { opacity: 0; transform: translateY(8px) scale(.98); }
     to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* The app preference and the operating-system preference apply to every shell
+ * surface, including settings editors declared after the older media rules. */
+body.tt-mobile-chat-shell.reduced-motion { --tt-motion-press: 0ms; --tt-motion-page: 0ms; }
+body.tt-mobile-chat-shell.reduced-motion :is(#tt-chat-header, #tt-chat-tabs, #tt-more-panel, #tt-chat-actions, #tt-settings-page, .drawer-content, #chat, #form_sheld, dialog.popup),
+body.tt-mobile-chat-shell.reduced-motion :is(#tt-chat-header, #tt-chat-tabs, #tt-more-panel, #tt-chat-actions, #tt-settings-page, .drawer-content, #chat, #form_sheld, dialog.popup) * {
+    animation: none !important; transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+    body.tt-mobile-chat-shell :is(#tt-settings-page, .tt-sp-dialog),
+    body.tt-mobile-chat-shell #tt-settings-page * { animation: none; transition: none; }
 }

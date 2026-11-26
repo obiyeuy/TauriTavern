@@ -25,7 +25,7 @@ pub enum CommandError {
     TooManyRequests(String),
 
     #[error("{0}")]
-    UpstreamFailure(UpstreamFailure),
+    UpstreamFailure(Box<UpstreamFailure>),
 
     #[error("Internal server error: {0}")]
     InternalServerError(String),

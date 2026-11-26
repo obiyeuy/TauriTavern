@@ -202,6 +202,12 @@ alias key 是 Rust 内部 character stem，不是 avatar filename。
 
 角色使用 `data.extensions.world` 绑定的那本世界书。卡内的 `character_book` 只是它的副本，在保存和导出时刷新；两者不一致是正常的，不算冲突。
 
+世界书文件的读、导入和 byte commit 共用 userdata adapter 的 document 入口。原生 World Info 使用对象 `entries`；CharacterBook 数组条目经 `tt-domain::models::character_book` 的共同纯 JSON 规则转换，关键词、排序和启用状态使用原生字段。普通对象格式保持原始字节；旧数组文件读取时不改写。转换保留完整 `originalData`，角色回写按条目 ID 保留未知字段，再更新当前条目内容。文件解析与原子发布仍由 adapter 负责。
+
+所有世界书写入共用同一发布入口，先同步暂存文件的原写入句柄，再原子替换目标。写入或同步失败保留旧文件并传播错误；暂存清理失败只记告警，不改写发布结果。此机制同步文件数据，不包含 rename 后父目录项的断电持久化。
+
+非空 CharacterBook 数组必须具有正确类型的 `keys`、`content` 和 `enabled`；可选的 `id`、`insertion_order` 必须是整数，缺省编号和排序保持旧导出格式的行为。未知数组格式或错误字段类型报告条目索引和字段，不按数组形状猜测语义。空数组表示空书。普通世界书覆盖导入沿同一发布入口保留现有名称和引用，验证失败不影响旧文件。
+
 接管内嵌书：
 
 - 只在卡片到达时处理：导入、替换、“导入角色卡的世界书”。规则在 `CharacterService::adopt_embedded_lorebook`，前端的询问和刷新在 `world-info.js` 的 `completeCharacterLorebookAdoption`。

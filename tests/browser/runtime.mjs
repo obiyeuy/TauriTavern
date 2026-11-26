@@ -94,6 +94,24 @@ export async function createBrowserRuntime({ identity = HOSTS.windows, fixture =
     });
     // Elements must stringify as in browsers, or Popper serializes the document during startup.
     delete window.Element.prototype.toString;
+    // happy-dom resets input values but retains assigned file lists. Model the browser reset action.
+    const resetForm = window.HTMLFormElement.prototype.reset;
+    window.HTMLFormElement.prototype.reset = function () {
+        let resetEvent;
+        const captureReset = event => { resetEvent = event; };
+        this.addEventListener('reset', captureReset, { once: true });
+        try {
+            const result = resetForm.call(this);
+            if (resetEvent && !resetEvent.defaultPrevented) {
+                for (const input of this.elements) {
+                    if (input instanceof window.HTMLInputElement && input.type === 'file') input.value = '';
+                }
+            }
+            return result;
+        } finally {
+            this.removeEventListener('reset', captureReset);
+        }
+    };
     window.document.write(readFileSync(path.join(root, 'index.html'), 'utf8')
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, ''));
     // CSS loading is disabled; the input editor still needs resolved text metrics.

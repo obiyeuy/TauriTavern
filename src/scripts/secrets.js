@@ -15,6 +15,8 @@ import { textgen_types } from './textgen-settings.js';
 import { hostPlatform } from './util/host-identity.js';
 import { copyText, isTrueBoolean } from './utils.js';
 import { toUserFacingErrorText } from './util/user-facing-error.js';
+import { requireOkResponse } from './util/command-error-utils.js';
+import { registerLifecycleFlushHandler } from '../tauri/main/services/lifecycle/lifecycle-flush-service.js';
 
 export const SECRET_KEYS = {
     HORDE: 'api_key_horde',
@@ -200,6 +202,9 @@ const INPUT_MAP = {
     [SECRET_KEYS.WORKERS_AI]: '#api_key_workers_ai',
 };
 
+// Structured service-account credentials retain their explicit validation flow.
+const AUTO_SAVE_INPUTS = Object.entries(INPUT_MAP).filter(([key]) => key !== SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT);
+
 const getLabel = () => moment().format('L LT');
 
 /**
@@ -266,11 +271,11 @@ export function getSecretLabelById(id) {
 
 export function updateSecretDisplay() {
     for (const [secret_key, input_selector] of Object.entries(INPUT_MAP)) {
-        const validSecret = !!secret_state[secret_key];
+        const validSecret = Array.isArray(secret_state[secret_key]) && secret_state[secret_key].some(secret => secret.active);
         const placeholder = $('#viewSecrets').attr(validSecret ? 'key_saved_text' : 'missing_key_text');
         const label = getActiveSecretLabel(secret_key);
         const placeholderWithLabel = label ? `${placeholder} (${label})` : placeholder;
-        $(input_selector).attr('placeholder', placeholderWithLabel);
+        $(input_selector).attr('placeholder', placeholderWithLabel).attr('data-secret-saved', String(validSecret));
     }
 }
 
@@ -348,9 +353,31 @@ async function viewSecrets() {
  */
 export let secret_state = {};
 let primedSecretState = null;
+const pendingSecretMutations = new Set();
+let secretMutationTail = Promise.resolve();
+let secretStateNeedsRefresh = false;
+let secretStateReadRevision = 0;
+let secretStateReadPromise = Promise.resolve();
 
 export function primeSecretStateSnapshot(snapshot) {
     primedSecretState = snapshot;
+}
+
+function enqueueSecretMutation(mutation, apply, eventType) {
+    const pending = { ...mutation, committed: false, promise: null };
+    const committed = secretMutationTail.then(apply);
+    // Every mutation replaces the same secrets document. Keep one order while
+    // returning the original result or failure to its caller and the save barrier.
+    secretMutationTail = committed.catch(() => {});
+    pending.promise = committed.then(async result => {
+        pending.committed = true;
+        // Extension listeners may await another mutation. Publish outside the IO
+        // queue so their follow-up edits can run before this notification ends.
+        await eventSource.emit(eventType, mutation.key);
+        return result;
+    }).finally(() => pendingSecretMutations.delete(pending));
+    pendingSecretMutations.add(pending);
+    return pending.promise;
 }
 
 /**
@@ -362,39 +389,76 @@ export function primeSecretStateSnapshot(snapshot) {
  * @param {boolean} [options.allowEmpty] Whether to allow writing empty values. If false and value is empty, the secret will be deleted.
  * @return {Promise<string?>} The ID of the newly created secret key, or null if no value is provided.
  */
-export async function writeSecret(key, value, label, { allowEmpty } = {}) {
+export function writeSecret(key, value, label, { allowEmpty } = {}) {
     if (!value && !allowEmpty) {
-        await deleteSecret(key);
-        return null;
+        return deleteSecret(key).then(() => null);
     }
-    const response = await requestSecret('write', { key, value, label: label || getLabel() }, t`Could not save API key`);
-    const { id } = await response.json();
-    // The key is persisted. A subsequent refresh failure must not cause a duplicate write on retry.
-    $(INPUT_MAP[key]).val('').trigger('input');
-    await readSecretState();
-    await eventSource.emit(event_types.SECRET_WRITTEN, key);
-    return id;
+    const existing = Array.from(pendingSecretMutations).findLast(pending => pending.key === key);
+    if (existing?.action === 'write' && !existing.committed && existing.value === value
+        && existing.label === label && existing.allowEmpty === allowEmpty) return existing.promise;
+
+    return enqueueSecretMutation({ action: 'write', key, value, label, allowEmpty }, async () => {
+        const response = await requestSecret('write', { key, value, label: label || getLabel() }, t`Could not save API key`);
+        const { id } = await response.json();
+        // The key is persisted. A subsequent refresh failure must not cause a duplicate write on retry.
+        $(INPUT_MAP[key]).each(function () {
+            if (String($(this).val()).trim() === value) $(this).val('').trigger('input');
+        });
+        await readSecretState();
+        return id;
+    }, event_types.SECRET_WRITTEN);
 }
 
+/** Commit native key drafts and await all secret changes before acknowledging Save or app exit. */
+export async function flushPendingSecretWrites() {
+    for (const [key, selector] of AUTO_SAVE_INPUTS) {
+        const input = document.querySelector(selector);
+        if (!input) continue;
+        const value = String($(input).val()).trim();
+        if (value) writeSecret(key, value);
+    }
+    while (pendingSecretMutations.size) {
+        await Promise.all(Array.from(pendingSecretMutations, pending => pending.promise));
+    }
+    if (secretStateNeedsRefresh) await readSecretState();
+}
+
+registerLifecycleFlushHandler('secret-mutations', flushPendingSecretWrites, { priority: -200 });
+
 /** Delete the active key, or a specific saved key. Rejects on deletion or refresh failure. */
-export async function deleteSecret(key, id) {
-    await requestSecret('delete', { key, id }, t`Could not delete API key`);
-    await readSecretState();
-    $('#main_api').trigger('change');
-    await eventSource.emit(event_types.SECRET_DELETED, key);
+export function deleteSecret(key, id) {
+    return enqueueSecretMutation({ action: 'delete', key }, async () => {
+        await requestSecret('delete', { key, id }, t`Could not delete API key`);
+        await readSecretState();
+        $('#main_api').trigger('change');
+    }, event_types.SECRET_DELETED);
 }
 
 /** Refresh the shared key metadata. Callers must not continue with old metadata after a failure. */
-export async function readSecretState() {
-    if (primedSecretState !== null) {
-        secret_state = primedSecretState;
-        primedSecretState = null;
-    } else {
-        const response = await requestSecret('read', undefined, t`Could not refresh API key state`);
-        secret_state = await response.json();
-    }
-    updateSecretDisplay();
-    updateInputDataLists();
+export function readSecretState() {
+    const revision = ++secretStateReadRevision;
+    const read = (async () => {
+        let snapshot;
+        if (primedSecretState !== null) {
+            snapshot = primedSecretState;
+            primedSecretState = null;
+        } else {
+            const response = await requestSecret('read', undefined, t`Could not refresh API key state`);
+            snapshot = await response.json();
+        }
+        // A Connect read may finish after a mutation's acknowledged refresh.
+        // Its caller must observe that newer refresh, never publish an older snapshot.
+        if (revision !== secretStateReadRevision) {
+            await secretStateReadPromise;
+            return;
+        }
+        secret_state = snapshot;
+        updateSecretDisplay();
+        updateInputDataLists();
+        secretStateNeedsRefresh = false;
+    })();
+    secretStateReadPromise = read;
+    return read;
 }
 
 /** The secrets API shares one request/error boundary; each UI or script entry owns notification. */
@@ -405,11 +469,11 @@ async function requestSecret(action, body, message) {
             headers: getRequestHeaders({ omitContentType: body === undefined }),
             body: body === undefined ? undefined : JSON.stringify(body),
         });
-        if (!response.ok) {
-            const detail = response.headers.get('content-type')?.includes('application/json')
-                ? await response.json() : await response.text();
-            throw new Error(toUserFacingErrorText(detail) || response.statusText);
-        }
+        // Finding a protected value has a documented nullable result. The host
+        // uses 401 for permission denial; the upstream route uses 403.
+        if (action === 'find' && (response.status === 401 || response.status === 403)) return null;
+        await requireOkResponse(response, message);
+        if (['write', 'delete', 'rotate', 'rename'].includes(action)) secretStateNeedsRefresh = true;
         return response;
     } catch (error) {
         throw new Error(`${message}: ${toUserFacingErrorText(error)}`, { cause: error });
@@ -421,24 +485,18 @@ async function requestSecret(action, body, message) {
  * @param {string} key Secret key
  * @param {string} [id] ID of the secret to find. If not provided, will return the active secret.
  * @returns {Promise<string?>} Secret value, or null if keys are not exposed
+ * @throws {Error} If reading or decoding the value fails. The caller owns notification.
  */
 export async function findSecret(key, id) {
+    const message = t`Could not find secret value`;
+    const response = await requestSecret('find', { key, id }, message);
+    if (response === null) return null;
     try {
-        const response = await fetch('/api/secrets/find', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ key, id }),
-        });
-
-        if (!response.ok) {
-            return null;
-        }
-
         const data = await response.json();
+        if (typeof data?.value !== 'string') throw new Error(t`Invalid secret value response`);
         return data.value;
-    } catch {
-        console.error('Could not find secret value: ', key);
-        return null;
+    } catch (error) {
+        throw new Error(`${message}: ${toUserFacingErrorText(error)}`, { cause: error });
     }
 }
 
@@ -448,19 +506,21 @@ export async function findSecret(key, id) {
  * @param {string} id ID of the secret to rotate
  * @returns {Promise<boolean>} Whether the secret was activated successfully
  */
-export async function rotateSecret(key, id) {
-    await requestSecret('rotate', { key, id }, t`Could not switch API key`);
-    await readSecretState();
-    $('#main_api').trigger('change');
-    await eventSource.emit(event_types.SECRET_ROTATED, key);
-    return true;
+export function rotateSecret(key, id) {
+    return enqueueSecretMutation({ action: 'rotate', key }, async () => {
+        await requestSecret('rotate', { key, id }, t`Could not switch API key`);
+        await readSecretState();
+        $('#main_api').trigger('change');
+        return true;
+    }, event_types.SECRET_ROTATED);
 }
 
 /** Rename a saved key. Rejects on rename or refresh failure. */
-export async function renameSecret(key, id, label) {
-    await requestSecret('rename', { key, id, label }, t`Could not rename API key`);
-    await readSecretState();
-    await eventSource.emit(event_types.SECRET_EDITED, key);
+export function renameSecret(key, id, label) {
+    return enqueueSecretMutation({ action: 'rename', key }, async () => {
+        await requestSecret('rename', { key, id, label }, t`Could not rename API key`);
+        await readSecretState();
+    }, event_types.SECRET_EDITED);
 }
 
 /**
@@ -643,14 +703,18 @@ async function openKeyManagerDialog(key) {
                 }
             });
             itemTemplate.find('button[data-action="copy-secret"]').on('click', async function () {
-                const secretValue = await findSecret(key, secret.id);
-                if (secretValue === null) {
-                    const hint = t`The key exposure is disabled. Enable Allow Keys Exposure in TauriTavern Settings and restart the app.`;
-                    toastr.error(hint, t`Failed to copy secret value`);
-                    return;
+                try {
+                    const secretValue = await findSecret(key, secret.id);
+                    if (secretValue === null) {
+                        const hint = t`The key exposure is disabled. Enable Allow Keys Exposure in TauriTavern Settings and restart the app.`;
+                        toastr.error(hint, t`Failed to copy secret value`);
+                        return;
+                    }
+                    await copyText(secretValue);
+                    toastr.info(t`Secret value copied to clipboard.`);
+                } catch (error) {
+                    toastr.error(toUserFacingErrorText(error), t`Failed to copy secret value`);
                 }
-                await copyText(secretValue);
-                toastr.info(t`Secret value copied to clipboard.`);
             });
             itemTemplate.find('button[data-action="rename-secret"]').on('click', async function () {
                 const label = await Popup.show.input(t`Rename Secret`, t`Enter new label for the secret:`, secret?.label || getLabel());
@@ -1082,15 +1146,19 @@ function registerSecretSlashCommands() {
                 return '';
             }
 
-            const secretValue = await findSecret(key, savedSecret.id);
-            if (secretValue === null) {
-                if (!quiet) {
-                    toastr.error(t`Could not retrieve the secret value for key: ${key}. Key exposure might be disabled.`);
+            try {
+                const secretValue = await findSecret(key, savedSecret.id);
+                if (secretValue === null) {
+                    if (!quiet) {
+                        toastr.error(t`Could not retrieve the secret value for key: ${key}. Key exposure might be disabled.`);
+                    }
+                    return '';
                 }
+                return secretValue;
+            } catch (error) {
+                if (!quiet) toastr.error(toUserFacingErrorText(error));
                 return '';
             }
-
-            return secretValue;
         },
     }));
 }
@@ -1106,33 +1174,42 @@ export async function initSecrets() {
         }
         await openKeyManagerDialog(key);
     });
-    $(document).on('input', Object.values(INPUT_MAP).join(','), async function () {
-        const id = $(this).attr('id');
-        const value = $(this).val();
-
-        // Find the key based on the entered value
-        for (const [key, inputSelector] of Object.entries(INPUT_MAP)) {
-            if (!value || !this.matches(inputSelector)) {
-                continue;
+    $(document).on('input change', Object.values(INPUT_MAP).join(','), async function (event) {
+        const [key, selector] = Object.entries(INPUT_MAP).find(([, inputSelector]) => this.matches(inputSelector));
+        const value = String($(this).val());
+        // Multiple editors for a provider edit one draft. Mirror the value before
+        // scheduling any work; sibling editors do not fire synthetic edit events.
+        $(selector).val(value);
+        const secrets = secret_state[key];
+        const secretMatch = value && Array.isArray(secrets) && secrets.find(secret => secret.id === value);
+        if (secretMatch) {
+            $(selector).val('');
+            try {
+                return await rotateSecret(key, secretMatch.id);
+            } catch (error) {
+                toastr.error(toUserFacingErrorText(error));
             }
-            const secrets = secret_state[key];
-            if (!Array.isArray(secrets)) {
-                continue;
-            }
-            const secretMatch = secrets.find(secret => secret.id === value);
-            if (secretMatch) {
-                $(this).val('');
-                try {
-                    return await rotateSecret(key, secretMatch.id);
-                } catch (error) {
-                    toastr.error(toUserFacingErrorText(error));
-                }
-            }
+            return;
         }
 
-        const warningElement = $(`[data-for="${id}"]`);
-        warningElement.toggle(value.length > 0);
+        $(selector).each(function () {
+            $(`[data-for="${this.id}"]`).toggle(value.length > 0);
+        });
+        // An empty editor represents a stored, hidden key; deletion remains explicit.
+        if (event.type !== 'change' || !value.trim() || !AUTO_SAVE_INPUTS.some(([candidate]) => candidate === key)) return;
+        try {
+            return await writeSecret(key, value.trim());
+        } catch (error) {
+            toastr.error(toUserFacingErrorText(error));
+        }
     });
+    for (const [, selector] of AUTO_SAVE_INPUTS) {
+        $(selector).each(function () {
+            const guidance = 'Your API key is saved when you finish editing and is hidden after saving.';
+            $(`[data-for="${this.id}"].neutral_warning`).attr('data-i18n', guidance)
+                .text(t`Your API key is saved when you finish editing and is hidden after saving.`);
+        });
+    }
     $('.openrouter_authorize').on('click', authorizeOpenRouter);
     registerSecretSlashCommands();
 }

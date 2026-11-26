@@ -369,9 +369,12 @@ export function initDefaultSlashCommands() {
                 return '';
             }
 
+            const quiet = isTrueBoolean(args?.quiet?.toString());
             const apiConfig = CONNECT_API_MAP[text?.toString()?.toLowerCase() ?? ''];
             if (!apiConfig) {
-                toastr.error(t`Error: ${text} is not a valid API`);
+                if (!quiet) {
+                    toastr.error(t`Error: ${text} is not a valid API`);
+                }
                 return '';
             }
 
@@ -403,7 +406,6 @@ export function initDefaultSlashCommands() {
                 connectionRequired = true;
             }
 
-            const quiet = isTrueBoolean(args?.quiet?.toString());
             const validationSuspended = isConnectionValidationSuspended();
 
             if (connectionRequired && apiConfig.button) {
@@ -459,7 +461,7 @@ export function initDefaultSlashCommands() {
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'custom-api-format',
-        callback: async function (_args, format) {
+        callback: async function (args, format) {
             const rawFormat = String(format || '').trim();
             const isOpenCode = main_api === 'openai'
                 && oai_settings.chat_completion_source === chat_completion_sources.OPENCODE;
@@ -473,10 +475,13 @@ export function initDefaultSlashCommands() {
                 return String(oai_settings.custom_api_format || 'openai_compat');
             }
 
+            const quiet = isTrueBoolean(args?.quiet?.toString());
             const normalized = rawFormat.toLowerCase();
             if (isOpenCode) {
                 if (!Object.values(OPENCODE_API_FORMAT).includes(normalized)) {
-                    toastr.error(t`Error: ${rawFormat} is not a valid OpenCode API format`);
+                    if (!quiet) {
+                        toastr.error(t`Error: ${rawFormat} is not a valid OpenCode API format`);
+                    }
                     return '';
                 }
                 $('#opencode_api_format').val(normalized).trigger('input');
@@ -485,7 +490,9 @@ export function initDefaultSlashCommands() {
 
             const allowed = ['openai_compat', 'openai_responses', 'claude_messages', 'gemini_interactions', 'gemini_generate_content'];
             if (!allowed.includes(normalized)) {
-                toastr.error(t`Error: ${rawFormat} is not a valid custom API format`);
+                if (!quiet) {
+                    toastr.error(t`Error: ${rawFormat} is not a valid custom API format`);
+                }
                 return '';
             }
 
@@ -5526,7 +5533,13 @@ async function updateCharacterCallback(args) {
             }
         }
 
-        await getOneCharacter(character.avatar);
+        try {
+            await getOneCharacter(character.avatar);
+        } catch (error) {
+            console.error('Character was saved but could not be refreshed:', error);
+            toastr.warning(error.message, t`Character saved, but could not be refreshed`);
+            return '';
+        }
         await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id: characterIndex, character: characters[characterIndex] } });
 
         if (String(characterIndex) === String(this_chid)) {
@@ -7029,7 +7042,7 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
     return textgenerationwebui_settings.server_urls[type] ?? '';
 }
 
-async function selectTokenizerCallback(_, name) {
+async function selectTokenizerCallback(args, name) {
     if (!name) {
         return getAvailableTokenizers().find(tokenizer => tokenizer.tokenizerId === power_user.tokenizer)?.tokenizerKey ?? '';
     }
@@ -7039,7 +7052,9 @@ async function selectTokenizerCallback(_, name) {
     const result = fuse.search(name);
 
     if (result.length === 0) {
-        toastr.warning(t`Tokenizer "${name}" not found`);
+        if (!isTrueBoolean(args?.quiet?.toString())) {
+            toastr.warning(t`Tokenizer "${name}" not found`);
+        }
         return '';
     }
 

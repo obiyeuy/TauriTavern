@@ -44,10 +44,11 @@ export { MacroCategory, MacroValueType };
 
 /**
  * Capture reusable input data without evaluating any character templates.
+ * @param {Pick<import('./engine/MacroEnvBuilder.js').MacroEnvRawContext, 'system'>} [options]
  * @returns {import('./engine/MacroEnv.types.js').MacroContext}
  */
-export function captureContext() {
-    return MacroEnvBuilder.captureContext();
+export function captureContext(options = {}) {
+    return MacroEnvBuilder.captureContext(options);
 }
 
 /**

@@ -83,7 +83,7 @@ impl StreamSessionRegistry {
             return;
         };
         let details = match &error {
-            ApplicationError::UpstreamFailure(failure) => Some(failure.clone()),
+            ApplicationError::UpstreamFailure(failure) => Some(failure.as_ref().clone()),
             _ => None,
         };
         session.fail(error.to_string(), details).await;

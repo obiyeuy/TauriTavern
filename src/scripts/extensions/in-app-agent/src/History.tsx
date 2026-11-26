@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { isComposingKeyboardEvent } from '../../../util/keyboard-event.js';
 import type { AssistantSnapshot } from './controller';
 import type { AssistantActions, AssistantController } from './host';
 import { ErrorNotice, Icon, NewConversationIcon } from './components';
@@ -56,6 +57,7 @@ export function History({ snapshot, controller, actions, onOpen, onNew }: {
         return date.format(at);
     }
     function closeMenu(event: KeyboardEvent) {
+        if (isComposingKeyboardEvent(event.nativeEvent)) return;
         if (event.key === 'Escape') {
             event.preventDefault();
             event.currentTarget.closest('.ttia-session-menu')?.querySelector<HTMLButtonElement>(':scope > button')?.focus();
@@ -101,7 +103,7 @@ export function History({ snapshot, controller, actions, onOpen, onNew }: {
                             {editing?.id === session.id ? <form className="ttia-session-rename" onSubmit={event => { event.preventDefault(); void rename(); }}>
                                 <input ref={input} aria-label={tr('conversationTitle')} value={editing.title} disabled={working !== null}
                                     onChange={event => setEditing({ id: session.id, title: event.target.value })} onKeyDown={event => {
-                                        if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); setEditing(null); }
+                                        if (event.key === 'Escape' && !isComposingKeyboardEvent(event.nativeEvent)) { event.preventDefault(); setEditing(null); }
                                     }} />
                                 <button type="submit" className="ttia-icon-button" aria-label={tr('saveTitle')} disabled={!editing.title.trim() || working !== null || snapshot.busy}><Icon name="check" /></button>
                                 <button type="button" className="ttia-icon-button" aria-label={tr('cancel')} disabled={working !== null} onClick={() => setEditing(null)}><Icon name="xmark" /></button>

@@ -4,6 +4,8 @@ import { sortMoments, timestampToMoment } from './utils.js';
 import { displayPastChats, getRequestHeaders, importCharacterChat } from '/script.js';
 import { importGroupChat } from './group-chats.js';
 import { visitJsonlStream } from './tauri/chat/jsonl.js';
+import { requireOkResponse } from './util/command-error-utils.js';
+import { toUserFacingErrorText } from './util/user-facing-error.js';
 
 class BackupsBrowser {
     /** @type {HTMLElement} */
@@ -124,19 +126,22 @@ class BackupsBrowser {
 
         this.#backupsListElement.innerHTML = '';
 
-        const response = await fetch('/api/backups/chat/get', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ detail: 'catalog' }),
-            signal,
-        });
-
-        if (!response.ok) {
-            console.error('Failed to load chat backups list:', response.statusText);
+        let backupsList;
+        try {
+            const response = await fetch('/api/backups/chat/get', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ detail: 'catalog' }),
+                signal,
+            });
+            await requireOkResponse(response, 'Load chat backups');
+            backupsList = await response.json();
+        } catch (error) {
+            if (signal.aborted) return;
+            console.error('Failed to load chat backups list:', error);
+            toastr.error(toUserFacingErrorText(error), t`Could not load chat backups`);
             return;
         }
-
-        const backupsList = await response.json();
 
         for (const backup of backupsList.sort((a, b) => sortMoments(
             timestampToMoment(a.backup_date ?? a.last_mes),

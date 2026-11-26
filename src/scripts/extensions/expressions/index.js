@@ -20,6 +20,8 @@ import { t } from '../../i18n.js';
 import { removeReasoningFromString } from '../../reasoning.js';
 import { macros } from '../../macros/macro-system.js';
 import { MacrosParser } from '../../macros.js';
+import { requireOkResponse } from '../../util/command-error-utils.js';
+import { toUserFacingErrorText } from '../../util/user-facing-error.js';
 export { MODULE_NAME };
 
 /**
@@ -141,7 +143,14 @@ async function forceUpdateVisualNovelMode() {
     }
 }
 
-const updateVisualNovelModeDebounced = debounce(forceUpdateVisualNovelMode, debounce_timeout.quick);
+function reportBackgroundExpressionError(error) {
+    // A background refresh aborts without publishing an empty sprite cache.
+    console.error('Background expression update failed:', error);
+}
+
+const updateVisualNovelModeDebounced = debounce(() => {
+    void forceUpdateVisualNovelMode().catch(reportBackgroundExpressionError);
+}, debounce_timeout.quick);
 
 async function updateVisualNovelMode(spriteFolderName, expression) {
     const vnContainer = $('#visual-novel-wrapper');
@@ -661,7 +670,6 @@ function getAvatarByMessage(message) {
  * @param {string?} [options.overrideSpriteFile=null] - Set if a specific sprite file should be used. Must be sprite file name.
  */
 export async function sendExpressionCall(spriteFolderName, expression, { force = false, vnMode = null, overrideSpriteFile = null } = {}) {
-    lastExpression[spriteFolderName.split('/')[0]] = expression;
     if (vnMode === null) {
         vnMode = isVisualNovelMode();
     }
@@ -669,8 +677,9 @@ export async function sendExpressionCall(spriteFolderName, expression, { force =
     if (vnMode) {
         await updateVisualNovelMode(spriteFolderName, expression);
     } else {
-        setExpression(spriteFolderName, expression, { force: force, overrideSpriteFile: overrideSpriteFile });
+        await setExpression(spriteFolderName, expression, { force: force, overrideSpriteFile: overrideSpriteFile });
     }
+    lastExpression[spriteFolderName.split('/')[0]] = expression;
 }
 
 /**
@@ -1288,44 +1297,36 @@ async function getListItem(expression, { images, isCustom = false } = {}) {
 async function getSpritesList(name) {
     console.debug('getting sprites list');
 
-    try {
-        const result = await fetch(`/api/sprites/get?name=${encodeURIComponent(name)}`);
-        /** @type {{ label: string, path: string }[]} */
-        let sprites = result.ok ? (await result.json()) : [];
+    const result = await fetch(`/api/sprites/get?name=${encodeURIComponent(name)}`);
+    await requireOkResponse(result, 'Load expression images');
+    /** @type {{ label: string, path: string }[]} */
+    const sprites = await result.json();
 
-        /** @type {Expression[]} */
-        const grouped = sprites.reduce((acc, sprite) => {
-            const imageData = getExpressionImageData(sprite);
-            let existingExpression = acc.find(exp => exp.label === sprite.label);
-            if (existingExpression) {
-                existingExpression.files.push(imageData);
-            } else {
-                acc.push({ label: sprite.label, files: [imageData] });
-            }
-
-            return acc;
-        }, []);
-
-        // Sort the sprites for each expression alphabetically, but keep the main expression file at the front
-        for (const expression of grouped) {
-            expression.files.sort((a, b) => {
-                if (a.title === expression.label) return -1;
-                if (b.title === expression.label) return 1;
-                return a.title.localeCompare(b.title);
-            });
-
-            // Mark all besides the first sprite as 'additional'
-            for (let i = 1; i < expression.files.length; i++) {
-                expression.files[i].type = 'additional';
-            }
+    /** @type {Expression[]} */
+    const grouped = sprites.reduce((acc, sprite) => {
+        const imageData = getExpressionImageData(sprite);
+        let existingExpression = acc.find(exp => exp.label === sprite.label);
+        if (existingExpression) {
+            existingExpression.files.push(imageData);
+        } else {
+            acc.push({ label: sprite.label, files: [imageData] });
         }
+        return acc;
+    }, []);
 
-        return grouped;
+    // Keep the main expression file first, followed by the other images in title order.
+    for (const expression of grouped) {
+        expression.files.sort((a, b) => {
+            if (a.title === expression.label) return -1;
+            if (b.title === expression.label) return 1;
+            return a.title.localeCompare(b.title);
+        });
+
+        for (let i = 1; i < expression.files.length; i++) {
+            expression.files[i].type = 'additional';
+        }
     }
-    catch (err) {
-        console.log(err);
-        return [];
-    }
+    return grouped;
 }
 
 async function renderAdditionalExpressionSettings() {
@@ -1725,16 +1726,21 @@ function setNoneForImage(img, expression) {
     img.removeClass('default');
 }
 
-function onClickExpressionImage() {
-    // If there is no expression image and we clicked on the placeholder, we remove the sprite by calling via the expression label
-    if ($(this).attr('data-expression-type') === 'failure') {
-        const label = $(this).attr('data-expression');
-        setSpriteSlashCommand({ type: 'expression' }, label);
-        return;
-    }
+async function onClickExpressionImage() {
+    try {
+        // A placeholder removes the sprite through its expression label.
+        if ($(this).attr('data-expression-type') === 'failure') {
+            const label = $(this).attr('data-expression');
+            await setSpriteSlashCommand({ type: 'expression' }, label);
+            return;
+        }
 
-    const spriteFile = $(this).attr('data-filename');
-    setSpriteSlashCommand({ type: 'sprite' }, spriteFile);
+        const spriteFile = $(this).attr('data-filename');
+        await setSpriteSlashCommand({ type: 'sprite' }, spriteFile);
+    } catch (error) {
+        console.error('Failed to set expression image:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not set expression image`);
+    }
 }
 
 async function onClickExpressionAddCustom() {
@@ -1770,7 +1776,12 @@ async function onClickExpressionAddCustom() {
     // Force refresh sprites list
     expressionsList = null;
     spriteCache = {};
-    moduleWorker();
+    try {
+        await moduleWorker();
+    } catch (error) {
+        console.error('Failed to refresh custom expressions:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not refresh expression images`);
+    }
 }
 
 async function onClickExpressionRemoveCustom() {
@@ -1803,10 +1814,15 @@ async function onClickExpressionRemoveCustom() {
     // Force refresh sprites list
     expressionsList = null;
     spriteCache = {};
-    moduleWorker();
+    try {
+        await moduleWorker();
+    } catch (error) {
+        console.error('Failed to refresh custom expressions:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not refresh expression images`);
+    }
 }
 
-function onExpressionApiChanged() {
+async function onExpressionApiChanged() {
     const tempApi = this.value;
     if (tempApi) {
         extension_settings.expressions.api = Number(tempApi);
@@ -1814,8 +1830,13 @@ function onExpressionApiChanged() {
         $('.expression_prompt_type_block').toggle(extension_settings.expressions.api === EXPRESSION_API.llm);
         expressionsList = null;
         spriteCache = {};
-        moduleWorker();
         saveSettingsDebounced();
+        try {
+            await moduleWorker();
+        } catch (error) {
+            console.error('Failed to refresh expressions after changing the API:', error);
+            toastr.error(toUserFacingErrorText(error), t`Could not refresh expression images`);
+        }
     }
 }
 
@@ -1853,7 +1874,12 @@ async function getExpressionListSlashCommand({ custom, filter = 'true', return: 
 }
 
 async function onExpressionFallbackChanged() {
-    await setFallbackExpression(this.value);
+    try {
+        await setFallbackExpression(this.value);
+    } catch (error) {
+        console.error('Failed to refresh the fallback expression:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not refresh expression images`);
+    }
 }
 
 async function setFallbackExpression(selectedValue) {
@@ -1873,6 +1899,7 @@ async function setFallbackExpression(selectedValue) {
     }
 
     fallbackPicker.value = selectedValue;
+    saveSettingsDebounced();
     const img = $('img.expression');
     const spriteFolderName = img.attr('data-sprite-folder-name');
     const expression = img.attr('data-expression');
@@ -1881,7 +1908,6 @@ async function setFallbackExpression(selectedValue) {
         await sendExpressionCall(spriteFolderName, expression, { force: true });
     }
 
-    saveSettingsDebounced();
 }
 
 /**
@@ -2087,9 +2113,10 @@ async function onClickExpressionOverrideButton() {
         const name = overridePath.length === 0 ? currentLastMessage.name : overridePath;
         const expression = await getExpressionLabel(currentLastMessage.mes);
         await sendExpressionCall(name, expression, { force: true });
-        forceUpdateVisualNovelMode();
+        await forceUpdateVisualNovelMode();
     } catch (error) {
         console.debug(`Setting expression override for ${avatarFileName} failed with error: ${error}`);
+        toastr.error(toUserFacingErrorText(error), t`Could not load expression images`);
     } finally {
         inApiCall = false;
     }
@@ -2113,11 +2140,12 @@ async function onClickExpressionOverrideRemoveAllButton() {
         await validateImages(currentLastMessage.name, true);
         const expression = await getExpressionLabel(currentLastMessage.mes);
         await sendExpressionCall(currentLastMessage.name, expression, { force: true });
-        forceUpdateVisualNovelMode();
+        await forceUpdateVisualNovelMode();
 
         console.debug(extension_settings.expressionOverrides);
     } catch (error) {
         console.debug(`The current expression could not be set because of error: ${error}`);
+        toastr.error(toUserFacingErrorText(error), t`Could not load expression images`);
     }
 }
 
@@ -2176,19 +2204,27 @@ async function onClickExpressionDelete(event) {
     const name = $('#image_list').data('name');
 
     try {
-        await fetch('/api/sprites/delete', {
+        const response = await fetch('/api/sprites/delete', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({ name, label: expression, spriteName: fileName }),
         });
+        await requireOkResponse(response, 'Delete expression image');
     } catch (error) {
-        toastr.error('Failed to delete image. Try again later.');
+        console.error('Failed to delete expression image:', error);
+        toastr.error(toUserFacingErrorText(error), t`Could not delete expression image`);
+        return;
     }
 
     // Refresh sprites list
     delete spriteCache[name];
-    await fetchImagesNoCache();
-    await validateImages(name);
+    try {
+        await fetchImagesNoCache();
+        await validateImages(name);
+    } catch (error) {
+        console.error('Expression image was deleted but could not be refreshed:', error);
+        toastr.warning(toUserFacingErrorText(error), t`Expression image deleted, but could not be refreshed`);
+    }
 }
 
 function setExpressionOverrideHtml(forceClear = false) {
@@ -2361,9 +2397,15 @@ export async function init() {
     migrateSettings();
     await addSettings();
     const wrapper = new ModuleWorkerWrapper(moduleWorker);
-    const updateFunction = wrapper.update.bind(wrapper);
+    const updateFunction = async (...args) => {
+        try {
+            await wrapper.update(...args);
+        } catch (error) {
+            reportBackgroundExpressionError(error);
+        }
+    };
     setInterval(updateFunction, UPDATE_INTERVAL);
-    moduleWorker();
+    await updateFunction();
     dragElement($('#expression-holder'));
     eventSource.on(event_types.CHAT_CHANGED, () => {
         // character changed

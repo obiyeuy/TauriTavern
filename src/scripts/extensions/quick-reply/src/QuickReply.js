@@ -11,6 +11,7 @@ import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.j
 import { SlashCommandParserError } from '../../../slash-commands/SlashCommandParserError.js';
 import { SlashCommandScope } from '../../../slash-commands/SlashCommandScope.js';
 import { accountStorage } from '../../../util/AccountStorage.js';
+import { isComposingKeyboardEvent } from '../../../util/keyboard-event.js';
 import { mountCodeMirrorEditor } from '../../../tauri/codemirror-editor.js';
 import { debounce, delay, getSortableDelay, showFontAwesomePicker } from '../../../utils.js';
 import { log, quickReplyApi, warn } from '../index.js';
@@ -664,7 +665,7 @@ export class QuickReply {
                 return lineStart;
             };
             message.addEventListener('keydown', async(evt) => {
-                if (this.isExecuting) return;
+                if (this.isExecuting || isComposingKeyboardEvent(evt)) return;
                 if (evt.key == 'Tab' && !evt.shiftKey && !evt.ctrlKey && !evt.altKey) {
                     // increase indent
                     evt.preventDefault();

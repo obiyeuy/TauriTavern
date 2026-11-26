@@ -3,6 +3,7 @@ use std::fmt;
 use serde::Serialize;
 
 pub const UPSTREAM_FAILURE_CATEGORY_NETWORK: &str = "network";
+pub const UPSTREAM_HTTP_NOT_FOUND: &str = "http.not_found";
 
 pub const UPSTREAM_NETWORK_TIMEOUT: &str = "network.timeout";
 pub const UPSTREAM_NETWORK_CONNECT_FAILED: &str = "network.connect_failed";
@@ -19,6 +20,8 @@ pub struct UpstreamFailure {
     pub category: String,
     pub endpoint: Option<String>,
     pub message_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_message: Option<String>,
 }
 
 impl UpstreamFailure {
@@ -32,6 +35,17 @@ impl UpstreamFailure {
             category: UPSTREAM_FAILURE_CATEGORY_NETWORK.to_string(),
             endpoint,
             message_key: message_key.into(),
+            provider_message: None,
+        }
+    }
+
+    pub fn http_not_found(endpoint: Option<String>, provider_message: String) -> Self {
+        Self {
+            code: UPSTREAM_HTTP_NOT_FOUND.to_string(),
+            category: "http".to_string(),
+            endpoint,
+            message_key: "tauritavern.error.http.not_found".to_string(),
+            provider_message: Some(provider_message),
         }
     }
 
@@ -49,6 +63,7 @@ impl UpstreamFailure {
             }
             UPSTREAM_NETWORK_REDIRECT_REJECTED => "The endpoint redirect was rejected.",
             UPSTREAM_NETWORK_REQUEST_FAILED => "Network request failed.",
+            UPSTREAM_HTTP_NOT_FOUND => "The API service returned HTTP 404 for this endpoint.",
             _ => "Upstream request failed.",
         }
     }
@@ -56,11 +71,15 @@ impl UpstreamFailure {
 
 impl fmt::Display for UpstreamFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.fallback_message())?;
+        if let Some(message) = self.provider_message.as_deref() {
+            write!(formatter, " {message}")?;
+        }
         match self.endpoint.as_deref() {
             Some(endpoint) if !endpoint.is_empty() => {
-                write!(formatter, "{} ({endpoint})", self.fallback_message())
+                write!(formatter, " ({endpoint})")
             }
-            _ => formatter.write_str(self.fallback_message()),
+            _ => Ok(()),
         }
     }
 }
