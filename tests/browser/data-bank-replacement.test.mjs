@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { afterEach, beforeEach, describe } from 'node:test';
 import { captureBrowserErrors, createBrowserRuntime } from './runtime.mjs';
 
 const ORIGINAL_URL = '/user/files/original.txt';
@@ -1818,100 +1818,111 @@ test('the message deletion control reports a confirmed deletion after a real swi
     }
 });
 
-for (const failure of ['conversion', 'HTTP', 'transport', 'upload receipt', 'media upload receipt', 'response body']) {
-    test(`normal attachment preparation preserves the draft after ${failure} failure`, { timeout: 30000 }, async () => {
-        const fixture = await createAttachmentFixture({ readyApp: true });
-        const { window } = fixture.runtime;
-        let upload;
-        try {
-            fixture.configureModel();
-            let convertible = false;
-            fixture.chats.registerFileConverter('text/x-preparation', async () => {
-                if (!convertible) throw new Error('Synthetic document extraction failed');
-                return 'EXTRACTED DOCUMENT';
-            });
-            if (failure === 'conversion') {
-                fixture.extension_settings.regex = [{
-                    id: 'preparation-draft', scriptName: 'Rewrite sent text',
-                    findRegex: 'Explain', replaceString: 'Rewritten', trimStrings: [],
-                    placement: [1], disabled: false, markdownOnly: false, promptOnly: false,
-                    runOnEdit: false, substituteRegex: 0, minDepth: null, maxDepth: null,
-                }];
-            }
-            const media = failure === 'media upload receipt';
-            const file = new window.File(
-                [media ? Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64') : 'RAW DOCUMENT'],
-                media ? 'selected.png' : 'selected.txt',
-                { type: media ? 'image/png' : failure === 'conversion' ? 'text/x-preparation' : 'text/plain' },
-            );
-            await fixture.selectDraftFiles([file]);
-            const input = window.document.getElementById('file_form_input');
-            const before = fixture.main.chat.length;
-            const persisted = fixture.runtime.fixture.chatFiles.get(fixture.main.getCurrentChatId());
-            let resets = 0;
-            window.jQuery('#file_form').on('reset.preparation', () => resets++);
-            if (failure !== 'conversion') upload = fixture.holdUpload();
-            const sending = fixture.sendFromButton('Explain the selected document.');
-            const rejected = assert.rejects(sending, error => failure.includes('receipt')
-                ? /file path/i.test(String(error))
-                : failure === 'response body' ? /JSON|Unexpected/i.test(String(error))
-                    : String(error).includes(failure === 'conversion'
-                        ? 'Synthetic document extraction failed' : 'Synthetic upload failed'));
-            if (upload) {
-                await upload.started.promise;
-                if (failure === 'HTTP') upload.reply.resolve(fixture.response('Synthetic upload failed', 500));
-                else if (failure === 'transport') upload.reply.reject(new TypeError('Synthetic upload failed'));
-                else if (failure.includes('receipt')) upload.reply.resolve(fixture.response('{}'));
-                else upload.reply.resolve(fixture.response('not valid JSON'));
-            }
-            await rejected;
-            assert.equal(fixture.main.chat.length, before, 'Preparation failure must not publish a user message');
-            assert.equal(fixture.runtime.fixture.chatFiles.get(fixture.main.getCurrentChatId()), persisted);
-            assert.deepEqual(fixture.sentMessages, []);
-            assert.deepEqual(fixture.modelRequests, []);
-            assert.equal(window.document.getElementById('send_textarea').value, 'Explain the selected document.');
-            assert.deepEqual([...input.files].map(file => file.name), [file.name]);
-            assert.equal(window.document.getElementById('file_form').classList.contains('displayNone'), false);
-            assert.equal(resets, 0, 'A failed preparation must not reset the selected file');
-            assert.equal(fixture.main.is_send_press, false);
-            assert.notEqual(window.document.body.dataset.generating, 'true');
-            assert.equal(fixture.notices.length, 1, 'The normal input owns the preparation failure once');
-            if (failure === 'conversion') assert.deepEqual(fixture.operations, [], 'Failed conversion must not upload raw bytes');
+describe('live chat user attachment preparation', { concurrency: false }, () => {
+    let fixture;
 
-            convertible = true;
-            await fixture.sendFromButton();
-            const sent = fixture.main.chat[before];
-            assert.equal(sent.mes, failure === 'conversion' ? 'Rewritten the selected document.' : 'Explain the selected document.');
-            if (media) {
-                assert.equal(sent.extra.media[0].type, 'image');
-                assert.equal(sent.extra.media[0].source, 'upload');
-                assert.equal(sent.extra.media[0].title, file.name);
-                assert.equal(sent.extra.inline_image, true);
-                const image = fixture.modelRequests[0].messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
-                    .find(content => content.type === 'image_url');
-                assert.equal(image.image_url.url, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=');
-            } else {
-                assert.equal(sent.extra.files[0].name, file.name);
-                assert.equal(sent.extra.files[0].size, file.size);
-                assert.equal(fixture.files.get(sent.extra.files[0].url), failure === 'conversion' ? 'EXTRACTED DOCUMENT' : 'RAW DOCUMENT');
-            }
-            assert.equal(fixture.modelRequests.length, 1);
-            assert.equal(fixture.notices.length, 1);
-            assert.equal(input.files.length, 0);
-            assert.equal(resets, 1);
-            assert.equal(window.document.getElementById('file_form').classList.contains('displayNone'), true);
-            assert.deepEqual(fixture.errors, []);
+    beforeEach(async () => {
+        fixture = await createAttachmentFixture({ readyApp: true });
+    });
+
+    afterEach(async () => {
+        try {
+            await fixture?.close();
         } finally {
-            upload?.reply.resolve(fixture.response('Fixture closing', 500));
-            await fixture.close();
+            fixture = undefined;
         }
     });
-}
 
-test('the user-message API rejects attachment conversion without owning a UI notice', { timeout: 30000 }, async () => {
-    const fixture = await createAttachmentFixture({ readyApp: true });
-    const { window } = fixture.runtime;
-    try {
+    for (const failure of ['conversion', 'HTTP', 'transport', 'upload receipt', 'media upload receipt', 'response body']) {
+        test(`normal attachment preparation preserves the draft after ${failure} failure`, { timeout: 30000 }, async () => {
+            const { window } = fixture.runtime;
+            let upload;
+            try {
+                fixture.configureModel();
+                let convertible = false;
+                fixture.chats.registerFileConverter('text/x-preparation', async () => {
+                    if (!convertible) throw new Error('Synthetic document extraction failed');
+                    return 'EXTRACTED DOCUMENT';
+                });
+                if (failure === 'conversion') {
+                    fixture.extension_settings.regex = [{
+                        id: 'preparation-draft', scriptName: 'Rewrite sent text',
+                        findRegex: 'Explain', replaceString: 'Rewritten', trimStrings: [],
+                        placement: [1], disabled: false, markdownOnly: false, promptOnly: false,
+                        runOnEdit: false, substituteRegex: 0, minDepth: null, maxDepth: null,
+                    }];
+                }
+                const media = failure === 'media upload receipt';
+                const file = new window.File(
+                    [media ? Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64') : 'RAW DOCUMENT'],
+                    media ? 'selected.png' : 'selected.txt',
+                    { type: media ? 'image/png' : failure === 'conversion' ? 'text/x-preparation' : 'text/plain' },
+                );
+                await fixture.selectDraftFiles([file]);
+                const input = window.document.getElementById('file_form_input');
+                const before = fixture.main.chat.length;
+                const persisted = fixture.runtime.fixture.chatFiles.get(fixture.main.getCurrentChatId());
+                let resets = 0;
+                window.jQuery('#file_form').on('reset.preparation', () => resets++);
+                if (failure !== 'conversion') upload = fixture.holdUpload();
+                const sending = fixture.sendFromButton('Explain the selected document.');
+                const rejected = assert.rejects(sending, error => failure.includes('receipt')
+                    ? /file path/i.test(String(error))
+                    : failure === 'response body' ? /JSON|Unexpected/i.test(String(error))
+                        : String(error).includes(failure === 'conversion'
+                            ? 'Synthetic document extraction failed' : 'Synthetic upload failed'));
+                if (upload) {
+                    await upload.started.promise;
+                    if (failure === 'HTTP') upload.reply.resolve(fixture.response('Synthetic upload failed', 500));
+                    else if (failure === 'transport') upload.reply.reject(new TypeError('Synthetic upload failed'));
+                    else if (failure.includes('receipt')) upload.reply.resolve(fixture.response('{}'));
+                    else upload.reply.resolve(fixture.response('not valid JSON'));
+                }
+                await rejected;
+                assert.equal(fixture.main.chat.length, before, 'Preparation failure must not publish a user message');
+                assert.equal(fixture.runtime.fixture.chatFiles.get(fixture.main.getCurrentChatId()), persisted);
+                assert.deepEqual(fixture.sentMessages, []);
+                assert.deepEqual(fixture.modelRequests, []);
+                assert.equal(window.document.getElementById('send_textarea').value, 'Explain the selected document.');
+                assert.deepEqual([...input.files].map(file => file.name), [file.name]);
+                assert.equal(window.document.getElementById('file_form').classList.contains('displayNone'), false);
+                assert.equal(resets, 0, 'A failed preparation must not reset the selected file');
+                assert.equal(fixture.main.is_send_press, false);
+                assert.notEqual(window.document.body.dataset.generating, 'true');
+                assert.equal(fixture.notices.length, 1, 'The normal input owns the preparation failure once');
+                if (failure === 'conversion') assert.deepEqual(fixture.operations, [], 'Failed conversion must not upload raw bytes');
+
+                convertible = true;
+                await fixture.sendFromButton();
+                const sent = fixture.main.chat[before];
+                assert.equal(sent.mes, failure === 'conversion' ? 'Rewritten the selected document.' : 'Explain the selected document.');
+                if (media) {
+                    assert.equal(sent.extra.media[0].type, 'image');
+                    assert.equal(sent.extra.media[0].source, 'upload');
+                    assert.equal(sent.extra.media[0].title, file.name);
+                    assert.equal(sent.extra.inline_image, true);
+                    const image = fixture.modelRequests[0].messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
+                        .find(content => content.type === 'image_url');
+                    assert.equal(image.image_url.url, 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=');
+                } else {
+                    assert.equal(sent.extra.files[0].name, file.name);
+                    assert.equal(sent.extra.files[0].size, file.size);
+                    assert.equal(fixture.files.get(sent.extra.files[0].url), failure === 'conversion' ? 'EXTRACTED DOCUMENT' : 'RAW DOCUMENT');
+                }
+                assert.equal(fixture.modelRequests.length, 1);
+                assert.equal(fixture.notices.length, 1);
+                assert.equal(input.files.length, 0);
+                assert.equal(resets, 1);
+                assert.equal(window.document.getElementById('file_form').classList.contains('displayNone'), true);
+                assert.deepEqual(fixture.errors, []);
+            } finally {
+                upload?.reply.resolve(fixture.response('Fixture closing', 500));
+            }
+        });
+    }
+
+    test('the user-message API rejects attachment conversion without owning a UI notice', { timeout: 30000 }, async () => {
+        const { window } = fixture.runtime;
         fixture.chats.registerFileConverter('text/x-api-preparation', async () => {
             throw new Error('Synthetic API conversion failed');
         });
@@ -1924,115 +1935,109 @@ test('the user-message API rejects attachment conversion without owning a UI not
         assert.deepEqual(fixture.notices, []);
         assert.equal(window.document.getElementById('send_textarea').value, 'Original API message');
         assert.deepEqual(fixture.errors, []);
-    } finally {
-        await fixture.close();
+    });
+
+    for (const phase of ['token count', 'upload']) {
+        test(`user attachment preparation retains its original conversation during ${phase}`, { timeout: 30000 }, async () => {
+            const { window, getModule } = fixture.runtime;
+            const token = { started: Promise.withResolvers(), reply: Promise.withResolvers() };
+            let upload;
+            try {
+                fixture.configureModel();
+                await fixture.selectDraftFiles([new window.File(['ORIGINAL TARGET FILE'], 'target.txt', { type: 'text/plain' })]);
+                const originalCount = fixture.main.chat.length;
+                const intended = 'Message intended for the original conversation';
+                if (phase === 'token count') {
+                    getModule('scripts/power-user.js').namespace.power_user.message_token_count_enabled = true;
+                    const ajax = window.jQuery.ajax;
+                    window.jQuery.ajax = options => {
+                        if (options.url?.startsWith('/api/tokenizers/openai/count-batch')
+                            && JSON.parse(options.data).some(item => item.content === intended)) {
+                            token.started.resolve();
+                            return token.reply.promise;
+                        }
+                        return ajax(options);
+                    };
+                } else upload = fixture.holdUpload();
+                const sending = fixture.main.sendMessageAsUser(intended);
+                const rejected = assert.rejects(sending, error => {
+                    assert.match(String(error), /attachment location changed/);
+                    if (phase === 'upload') assert.ok(String(error).includes('/user/files/original-target.txt'));
+                    return true;
+                });
+                await (upload ? upload.started.promise : token.started.promise);
+                fixture.main.characters.push({ ...structuredClone(fixture.main.characters[0]),
+                    name: 'Other', avatar: 'Other.png', chat: 'other-chat' });
+                fixture.main.setCharacterId(fixture.main.characters.length - 1);
+                fixture.main.setCharacterName('Other');
+                window.jQuery('#send_textarea').val('New conversation draft');
+                if (upload) upload.reply.resolve(fixture.response(JSON.stringify({ path: '/user/files/original-target.txt' })));
+                else token.reply.resolve({ token_counts: [4] });
+                await rejected;
+                assert.equal(fixture.main.chat.length, originalCount);
+                assert.equal(fixture.runtime.fixture.chatFiles.has('other-chat'), false);
+                assert.equal(window.document.getElementById('send_textarea').value, 'New conversation draft');
+                assert.deepEqual(fixture.sentMessages, []);
+                assert.deepEqual(fixture.notices, []);
+                if (phase === 'token count') assert.deepEqual(fixture.operations, []);
+                else assert.equal(fixture.files.get('/user/files/original-target.txt'), 'ORIGINAL TARGET FILE');
+                assert.deepEqual(fixture.errors, []);
+            } finally {
+                token.reply.resolve({ token_counts: [4] });
+                upload?.reply.resolve(fixture.response('Fixture closing', 500));
+            }
+        });
+    }
+
+    for (const phase of ['upload', 'token count']) {
+        test(`a new file selection and text draft survive completion of an older preparation during ${phase}`, { timeout: 30000 }, async () => {
+            const { window, getModule } = fixture.runtime;
+            const upload = fixture.holdUpload();
+            const token = { started: Promise.withResolvers(), reply: Promise.withResolvers() };
+            try {
+                fixture.configureModel();
+                const oldFile = new window.File(['OLD SELECTION CONTENT'], 'old.txt', { type: 'text/plain' });
+                const newFile = new window.File(['NEW SELECTION CONTENT'], 'new.txt', { type: 'text/plain' });
+                await fixture.selectDraftFiles([oldFile]);
+                const before = fixture.main.chat.length;
+                if (phase === 'token count') {
+                    getModule('scripts/power-user.js').namespace.power_user.message_token_count_enabled = true;
+                    const ajax = window.jQuery.ajax;
+                    window.jQuery.ajax = options => {
+                        if (options.url?.startsWith('/api/tokenizers/openai/count-batch')
+                            && JSON.parse(options.data).some(item => item.content === 'Send the first file.')) {
+                            token.started.resolve();
+                            return token.reply.promise;
+                        }
+                        return ajax(options);
+                    };
+                }
+                const sending = fixture.sendFromButton('Send the first file.');
+                await (phase === 'upload' ? upload.started.promise : token.started.promise);
+                await fixture.selectDraftFiles([newFile]);
+                window.jQuery('#send_textarea').val('My next message');
+                token.reply.resolve({ token_counts: [4] });
+                await upload.started.promise;
+                upload.reply.resolve(fixture.response(JSON.stringify({ path: '/user/files/old-selection.txt' })));
+                await sending;
+                const sent = fixture.main.chat[before];
+                assert.equal(sent.mes, 'Send the first file.');
+                assert.equal(sent.extra.files.length, 1);
+                assert.equal(sent.extra.files[0].url, '/user/files/old-selection.txt');
+                assert.equal(fixture.modelRequests.length, 1);
+                assert.ok(fixture.modelRequests[0].messages.some(message => message.content?.includes('OLD SELECTION CONTENT')));
+                assert.equal(window.document.getElementById('send_textarea').value, 'My next message');
+                assert.deepEqual([...window.document.getElementById('file_form_input').files].map(file => file.name), ['old.txt', 'new.txt']);
+                assert.equal(window.document.getElementById('file_form').classList.contains('displayNone'), false);
+                assert.deepEqual(fixture.notices, []);
+                assert.deepEqual(fixture.errors, []);
+            } finally {
+                token.reply.resolve({ token_counts: [4] });
+                upload.reply.resolve(fixture.response('Fixture closing', 500));
+            }
+        });
     }
 });
-
-for (const phase of ['token count', 'upload']) {
-    test(`user attachment preparation retains its original conversation during ${phase}`, { timeout: 30000 }, async () => {
-        const fixture = await createAttachmentFixture({ readyApp: true });
-        const { window, getModule } = fixture.runtime;
-        const token = { started: Promise.withResolvers(), reply: Promise.withResolvers() };
-        let upload;
-        try {
-            fixture.configureModel();
-            await fixture.selectDraftFiles([new window.File(['ORIGINAL TARGET FILE'], 'target.txt', { type: 'text/plain' })]);
-            const originalCount = fixture.main.chat.length;
-            const intended = 'Message intended for the original conversation';
-            if (phase === 'token count') {
-                getModule('scripts/power-user.js').namespace.power_user.message_token_count_enabled = true;
-                const ajax = window.jQuery.ajax;
-                window.jQuery.ajax = options => {
-                    if (options.url?.startsWith('/api/tokenizers/openai/count-batch')
-                        && JSON.parse(options.data).some(item => item.content === intended)) {
-                        token.started.resolve();
-                        return token.reply.promise;
-                    }
-                    return ajax(options);
-                };
-            } else upload = fixture.holdUpload();
-            const sending = fixture.main.sendMessageAsUser(intended);
-            const rejected = assert.rejects(sending, error => {
-                assert.match(String(error), /attachment location changed/);
-                if (phase === 'upload') assert.ok(String(error).includes('/user/files/original-target.txt'));
-                return true;
-            });
-            await (upload ? upload.started.promise : token.started.promise);
-            fixture.main.characters.push({ ...structuredClone(fixture.main.characters[0]),
-                name: 'Other', avatar: 'Other.png', chat: 'other-chat' });
-            fixture.main.setCharacterId(fixture.main.characters.length - 1);
-            fixture.main.setCharacterName('Other');
-            window.jQuery('#send_textarea').val('New conversation draft');
-            if (upload) upload.reply.resolve(fixture.response(JSON.stringify({ path: '/user/files/original-target.txt' })));
-            else token.reply.resolve({ token_counts: [4] });
-            await rejected;
-            assert.equal(fixture.main.chat.length, originalCount);
-            assert.equal(fixture.runtime.fixture.chatFiles.has('other-chat'), false);
-            assert.equal(window.document.getElementById('send_textarea').value, 'New conversation draft');
-            assert.deepEqual(fixture.sentMessages, []);
-            assert.deepEqual(fixture.notices, []);
-            if (phase === 'token count') assert.deepEqual(fixture.operations, []);
-            else assert.equal(fixture.files.get('/user/files/original-target.txt'), 'ORIGINAL TARGET FILE');
-            assert.deepEqual(fixture.errors, []);
-        } finally {
-            token.reply.resolve({ token_counts: [4] });
-            upload?.reply.resolve(fixture.response('Fixture closing', 500));
-            await fixture.close();
-        }
-    });
-}
-
-for (const phase of ['upload', 'token count']) {
-    test(`a new file selection and text draft survive completion of an older preparation during ${phase}`, { timeout: 30000 }, async () => {
-        const fixture = await createAttachmentFixture({ readyApp: true });
-        const { window, getModule } = fixture.runtime;
-        const upload = fixture.holdUpload();
-        const token = { started: Promise.withResolvers(), reply: Promise.withResolvers() };
-        try {
-            fixture.configureModel();
-            const oldFile = new window.File(['OLD SELECTION CONTENT'], 'old.txt', { type: 'text/plain' });
-            const newFile = new window.File(['NEW SELECTION CONTENT'], 'new.txt', { type: 'text/plain' });
-            await fixture.selectDraftFiles([oldFile]);
-            const before = fixture.main.chat.length;
-            if (phase === 'token count') {
-                getModule('scripts/power-user.js').namespace.power_user.message_token_count_enabled = true;
-                const ajax = window.jQuery.ajax;
-                window.jQuery.ajax = options => {
-                    if (options.url?.startsWith('/api/tokenizers/openai/count-batch')
-                        && JSON.parse(options.data).some(item => item.content === 'Send the first file.')) {
-                        token.started.resolve();
-                        return token.reply.promise;
-                    }
-                    return ajax(options);
-                };
-            }
-            const sending = fixture.sendFromButton('Send the first file.');
-            await (phase === 'upload' ? upload.started.promise : token.started.promise);
-            await fixture.selectDraftFiles([newFile]);
-            window.jQuery('#send_textarea').val('My next message');
-            token.reply.resolve({ token_counts: [4] });
-            await upload.started.promise;
-            upload.reply.resolve(fixture.response(JSON.stringify({ path: '/user/files/old-selection.txt' })));
-            await sending;
-            const sent = fixture.main.chat[before];
-            assert.equal(sent.mes, 'Send the first file.');
-            assert.equal(sent.extra.files.length, 1);
-            assert.equal(sent.extra.files[0].url, '/user/files/old-selection.txt');
-            assert.equal(fixture.modelRequests.length, 1);
-            assert.ok(fixture.modelRequests[0].messages.some(message => message.content?.includes('OLD SELECTION CONTENT')));
-            assert.equal(window.document.getElementById('send_textarea').value, 'My next message');
-            assert.deepEqual([...window.document.getElementById('file_form_input').files].map(file => file.name), ['old.txt', 'new.txt']);
-            assert.equal(window.document.getElementById('file_form').classList.contains('displayNone'), false);
-            assert.deepEqual(fixture.notices, []);
-            assert.deepEqual(fixture.errors, []);
-        } finally {
-            token.reply.resolve({ token_counts: [4] });
-            upload.reply.resolve(fixture.response('Fixture closing', 500));
-            await fixture.close();
-        }
-    });
-}
 
 function addReplyWithAttachment(fixture) {
     const message = {

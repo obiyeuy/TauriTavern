@@ -39,6 +39,8 @@ Rust 改动先运行受影响 crate 的 focused tests 和 `node scripts/check-ru
 
 Node.js 22 将 `--test-timeout=60000` 应用到整个测试文件，多用例的浏览器文件会因累计时间超限被取消。Node.js 24 将该限制应用到具体用例。本仓库统一使用 Node.js 24，保留 60 秒限制与原完整测试内容；测试文件中多个独立用例的时间不再共用一个文件预算。
 
+浏览器中的独立行为使用 `describe` 登记为套件，模拟应用的准备和清理由 `before`、`beforeEach`、`after`、`afterEach` 承担。每个用例保留原有的操作限时，准备钩子同样受测试运行器的限时约束。共享可变 fixture 的套件顺序执行。
+
 私有仓库的分支保护能力取决于 GitHub 账户套餐。没有生效的保护不能称为已配置；本地授权与 PR 审阅要求仍需遵守。
 
 ## Android 构建与安装
