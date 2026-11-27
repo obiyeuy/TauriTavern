@@ -37,7 +37,7 @@ Rust 改动先运行受影响 crate 的 focused tests 和 `node scripts/check-ru
 
 ## 自动合并
 
-`PR auto-merge` 从默认分支监听 `PR quality gate` 的成功结果，通过 GitHub 查询被检查提交关联的 PR，并核对 PR 的最新状态。以下 PR 会自动请求合并：
+`PR auto-merge` 从默认分支监听 `PR quality gate` 的成功结果，通过来源分支查询 GitHub 当前打开的 PR，并核对 PR 的提交及最新状态。以下 PR 会自动请求合并：
 
 - 作者是仓库所有者，来源是本仓库分支。
 - PR 已打开、处于非草稿状态，目标为 `dev` 或 `main`。
