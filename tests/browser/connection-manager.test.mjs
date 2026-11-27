@@ -1,106 +1,120 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after, before, describe } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { setImmediate } from 'node:timers/promises';
 import { captureBrowserErrors, createBrowserRuntime } from './runtime.mjs';
 import { HOSTS } from '../helpers/host-identity.mjs';
 
-test('Connection Manager reports the result of its own application', async context => {
-    const runtime = await createBrowserRuntime({ identity: HOSTS.android });
-    const { window, load, getModule } = runtime;
-    context.after(() => window.happyDOM.close());
-    const { errors, failed } = captureBrowserErrors(window);
-    await runtime.startHost();
-    await load('script.js');
-    const { eventSource, event_types } = getModule('scripts/events.js').namespace;
-    const ready = new Promise(resolve => eventSource.once(event_types.APP_READY, resolve));
-    const extensionsLoaded = new Promise(resolve => eventSource.once(event_types.EXTENSION_SETTINGS_LOADED, resolve));
-    window.jQuery.holdReady(false);
-    await Promise.race([Promise.all([ready, extensionsLoaded]), failed]);
-    if (!window.document.getElementById('connection_profiles')) {
-        await (await load('scripts/extensions/connection-manager/index.js')).namespace.init();
-    }
-    assert.equal(window.document.querySelectorAll('#connection_profiles').length, 1);
-    await getModule('scripts/reasoning.js').namespace.loadReasoningTemplates({
-        reasoning: [JSON.parse(await readFile(new URL('../../default/content/presets/reasoning/Think XML.json', import.meta.url), 'utf8'))],
-    });
+describe('Connection Manager reports the result of its own application', { concurrency: false }, () => {
+    let runtime, window, load, getModule, errors, failed, eventSource, event_types;
+    let executeSlashCommandsWithOptions, extension_settings, power_user, secrets, key, state;
+    let execute, notices, outcome, loaded, modelLoaded, statusRequests, statusStarted;
+    let resourceFetch, rotate, profiles, spinner, reset;
 
-    const { executeSlashCommandsWithOptions } = getModule('scripts/slash-commands.js').namespace;
-    const { extension_settings } = getModule('scripts/extensions.js').namespace;
-    const { power_user } = getModule('scripts/power-user.js').namespace;
-    const secrets = getModule('scripts/secrets.js').namespace;
-    const key = secrets.SECRET_KEYS.CUSTOM;
-    const state = {
-        [key]: [
-            { id: 'original-key', value: 'masked', label: 'Original', active: true },
-            { id: 'target-key', value: 'masked', label: 'Target', active: false },
-        ],
-    };
-    const execute = command => executeSlashCommandsWithOptions(command, {
-        handleExecutionErrors: false, showWarning: false,
-    });
-    const notices = { error: [], success: [], warning: [] };
-    let outcome;
-    window.toastr.error = (...args) => {
-        notices.error.push(args.map(String).join(' '));
-        outcome?.resolve();
-    };
-    window.toastr.success = (...args) => notices.success.push(args.map(String).join(' '));
-    window.toastr.warning = (...args) => {
-        notices.warning.push(args.map(String).join(' '));
-        outcome?.resolve();
-    };
-    const loaded = [];
-    const modelLoaded = [];
-    eventSource.on(event_types.CONNECTION_PROFILE_LOADED, name => { loaded.push(name); outcome?.resolve(); });
-    eventSource.on(event_types.MODEL_TARGET_LOADED, name => { modelLoaded.push(name); outcome?.resolve(); });
-    const statusRequests = [];
-    let statusStarted = Promise.withResolvers();
-    const resourceFetch = window.fetch;
-    let rotate = async () => window.Response.json({ ok: true });
-    window.fetch = async (input, init) => {
-        const path = new URL(input, window.location.href).pathname;
-        if (path === '/api/secrets/read') return window.Response.json(state);
-        if (path === '/api/secrets/rotate') {
-            const request = JSON.parse(init.body);
-            const response = await rotate(request);
-            if (response.ok) {
-                for (const secret of state[request.key]) secret.active = secret.id === request.id;
-            }
-            return response;
+    before(async () => {
+        runtime = await createBrowserRuntime({ identity: HOSTS.android });
+        ({ window, load, getModule } = runtime);
+        ({ errors, failed } = captureBrowserErrors(window));
+        await runtime.startHost();
+        await load('script.js');
+        ({ eventSource, event_types } = getModule('scripts/events.js').namespace);
+        const ready = new Promise(resolve => eventSource.once(event_types.APP_READY, resolve));
+        const extensionsLoaded = new Promise(resolve => eventSource.once(event_types.EXTENSION_SETTINGS_LOADED, resolve));
+        window.jQuery.holdReady(false);
+        await Promise.race([Promise.all([ready, extensionsLoaded]), failed]);
+        if (!window.document.getElementById('connection_profiles')) {
+            await (await load('scripts/extensions/connection-manager/index.js')).namespace.init();
         }
-        if (path.endsWith('/status')) {
-            statusRequests.push(init?.body ? JSON.parse(init.body) : { path });
-            statusStarted.resolve();
-            if (path === '/api/backends/chat-completions/status') {
-                return window.Response.json({ data: [{ id: 'profile-model' }] });
-            }
-        }
-        return resourceFetch(input, init);
-    };
-    const profiles = window.document.getElementById('connection_profiles');
-    const spinner = window.document.getElementById('connection_profile_spinner');
-    const reset = async name => {
-        outcome = undefined;
-        rotate = async () => new window.Response('Key activation failed', { status: 500 });
-        state[key][0].active = true;
-        state[key][1].active = false;
-        await execute('/api custom');
-        await execute('/api-url connect=false https://api.example.test/v1');
-        await execute('/model quiet=true profile-model');
-        await execute('/stop-strings ["preserve"]');
-        await execute('/start-reply-with Preserve');
-        await secrets.readSecretState();
-        await execute(`/profile-create ${name}`);
-        const profile = extension_settings.connectionManager.profiles.find(item => item.name === name);
-        assert.equal(profiles.value, profile.id, 'The newly captured profile remains selected after rendering its catalog');
-        profile['secret-id'] = 'target-key';
-        notices.error.length = notices.success.length = notices.warning.length = loaded.length = modelLoaded.length = statusRequests.length = 0;
+        assert.equal(window.document.querySelectorAll('#connection_profiles').length, 1);
+        await getModule('scripts/reasoning.js').namespace.loadReasoningTemplates({
+            reasoning: [JSON.parse(await readFile(new URL('../../default/content/presets/reasoning/Think XML.json', import.meta.url), 'utf8'))],
+        });
+
+        ({ executeSlashCommandsWithOptions } = getModule('scripts/slash-commands.js').namespace);
+        ({ extension_settings } = getModule('scripts/extensions.js').namespace);
+        ({ power_user } = getModule('scripts/power-user.js').namespace);
+        secrets = getModule('scripts/secrets.js').namespace;
+        key = secrets.SECRET_KEYS.CUSTOM;
+        state = {
+            [key]: [
+                { id: 'original-key', value: 'masked', label: 'Original', active: true },
+                { id: 'target-key', value: 'masked', label: 'Target', active: false },
+            ],
+        };
+        execute = command => executeSlashCommandsWithOptions(command, {
+            handleExecutionErrors: false, showWarning: false,
+        });
+        notices = { error: [], success: [], warning: [] };
+        window.toastr.error = (...args) => {
+            notices.error.push(args.map(String).join(' '));
+            outcome?.resolve();
+        };
+        window.toastr.success = (...args) => notices.success.push(args.map(String).join(' '));
+        window.toastr.warning = (...args) => {
+            notices.warning.push(args.map(String).join(' '));
+            outcome?.resolve();
+        };
+        loaded = [];
+        modelLoaded = [];
+        eventSource.on(event_types.CONNECTION_PROFILE_LOADED, name => { loaded.push(name); outcome?.resolve(); });
+        eventSource.on(event_types.MODEL_TARGET_LOADED, name => { modelLoaded.push(name); outcome?.resolve(); });
+        statusRequests = [];
         statusStarted = Promise.withResolvers();
-        return profile;
-    };
+        resourceFetch = window.fetch;
+        rotate = async () => window.Response.json({ ok: true });
+        window.fetch = async (input, init) => {
+            const path = new URL(input, window.location.href).pathname;
+            if (path === '/api/secrets/read') return window.Response.json(state);
+            if (path === '/api/secrets/rotate') {
+                const request = JSON.parse(init.body);
+                const response = await rotate(request);
+                if (response.ok) {
+                    for (const secret of state[request.key]) secret.active = secret.id === request.id;
+                }
+                return response;
+            }
+            if (path.endsWith('/status')) {
+                statusRequests.push(init?.body ? JSON.parse(init.body) : { path });
+                statusStarted.resolve();
+                if (path === '/api/backends/chat-completions/status') {
+                    return window.Response.json({ data: [{ id: 'profile-model' }] });
+                }
+            }
+            return resourceFetch(input, init);
+        };
+        profiles = window.document.getElementById('connection_profiles');
+        spinner = window.document.getElementById('connection_profile_spinner');
+        reset = async name => {
+            outcome = undefined;
+            rotate = async () => new window.Response('Key activation failed', { status: 500 });
+            state[key][0].active = true;
+            state[key][1].active = false;
+            await execute('/api custom');
+            await execute('/api-url connect=false https://api.example.test/v1');
+            await execute('/model quiet=true profile-model');
+            await execute('/stop-strings ["preserve"]');
+            await execute('/start-reply-with Preserve');
+            await secrets.readSecretState();
+            await execute(`/profile-create ${name}`);
+            const profile = extension_settings.connectionManager.profiles.find(item => item.name === name);
+            assert.equal(profiles.value, profile.id, 'The newly captured profile remains selected after rendering its catalog');
+            profile['secret-id'] = 'target-key';
+            notices.error.length = notices.success.length = notices.warning.length = loaded.length = modelLoaded.length = statusRequests.length = 0;
+            statusStarted = Promise.withResolvers();
+            return profile;
+        };
+    });
 
-    await context.test('a failed key activation rejects the command and allows a complete retry with empty fields', async () => {
+    after(async () => {
+        if (!window) return;
+        try {
+            assert.deepEqual(errors, []);
+        } finally {
+            await window.happyDOM.close();
+        }
+    });
+
+    test('a failed key activation rejects the command and allows a complete retry with empty fields', async () => {
         const profile = await reset('KeyFailure');
         profile['stop-strings'] = '';
         profile['start-reply-with'] = '';
@@ -122,7 +136,7 @@ test('Connection Manager reports the result of its own application', async conte
         assert.equal(statusRequests.length, 1);
     });
 
-    await context.test('a thrown field error stops replay before later settings and connection', async () => {
+    test('a thrown field error stops replay before later settings and connection', async () => {
         const profile = await reset('FormatFailure');
         profile['stop-strings'] = 'invalid-list';
         profile['start-reply-with'] = 'Must not be applied';
@@ -135,7 +149,7 @@ test('Connection Manager reports the result of its own application', async conte
     });
 
     for (const action of ['selection', 'reload']) {
-        await context.test(`native ${action} reports one failed application without a success event`, async () => {
+        test(`native ${action} reports one failed application without a success event`, async () => {
             await reset(`Native-${action}`);
             outcome = Promise.withResolvers();
             if (action === 'selection') profiles.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -151,7 +165,7 @@ test('Connection Manager reports the result of its own application', async conte
         });
     }
 
-    await context.test('an unsupported API has one application error and preserves the public quiet convention', async () => {
+    test('an unsupported API has one application error and preserves the public quiet convention', async () => {
         const profile = await reset('UnsupportedApi');
         profile.api = 'retired-api';
         outcome = Promise.withResolvers();
@@ -173,7 +187,7 @@ test('Connection Manager reports the result of its own application', async conte
         assert.deepEqual(notices.error, [], 'A quiet public command keeps the empty failure result without a toast');
     });
 
-    await context.test('an unrelated loaded event cannot complete a pending profile command', async () => {
+    test('an unrelated loaded event cannot complete a pending profile command', async () => {
         await reset('OwnApplication');
         const started = Promise.withResolvers();
         const response = Promise.withResolvers();
@@ -206,7 +220,7 @@ test('Connection Manager reports the result of its own application', async conte
     });
 
     for (const [status, activeId] of [[200, 'target-key'], [500, 'original-key']]) {
-        await context.test(`None invalidates pending replay with key response ${status}`, async () => {
+        test(`None invalidates pending replay with key response ${status}`, async () => {
             const profileName = `CancelledApplication${status}`;
             await reset(profileName);
             const started = Promise.withResolvers();
@@ -255,7 +269,7 @@ test('Connection Manager reports the result of its own application', async conte
         });
     }
 
-    await context.test('a new application after None still waits for the pending independent key write', async () => {
+    test('a new application after None still waits for the pending independent key write', async () => {
         const profileName = 'QueuedAfterNone';
         await reset(profileName);
         const started = Promise.withResolvers();
@@ -307,7 +321,7 @@ test('Connection Manager reports the result of its own application', async conte
         }
     });
 
-    await context.test('a pending Android details template cannot restore the profile cleared by None', async () => {
+    test('a pending Android details template cannot restore the profile cleared by None', async () => {
         await reset('PendingDetails');
         const details = window.document.getElementById('connection_profile_details_content');
         const viewButton = window.document.getElementById('view_connection_profile');
@@ -352,7 +366,7 @@ test('Connection Manager reports the result of its own application', async conte
         }
     });
 
-    await context.test('a non-awaited application returns promptly and reports its later failure once', async () => {
+    test('a non-awaited application returns promptly and reports its later failure once', async () => {
         await reset('BackgroundFailure');
         const started = Promise.withResolvers();
         const response = Promise.withResolvers();
@@ -379,7 +393,7 @@ test('Connection Manager reports the result of its own application', async conte
         }
     });
 
-    await context.test('capturing a new selected profile invalidates pending replay through the same selection writer', async () => {
+    test('capturing a new selected profile invalidates pending replay through the same selection writer', async () => {
         await reset('PendingCapture');
         const started = Promise.withResolvers();
         const response = Promise.withResolvers();
@@ -408,7 +422,7 @@ test('Connection Manager reports the result of its own application', async conte
         }
     });
 
-    await context.test('a saved Model Target uses the same native failure presentation', async () => {
+    test('a saved Model Target uses the same native failure presentation', async () => {
         extension_settings.connectionManager.modelTargets.push({
             id: 'saved-model-target', name: 'Saved Model', schemaVersion: 1, kind: 'tauritavern.modelTarget',
             mode: 'cc', api: 'custom', model: 'profile-model',
@@ -435,7 +449,7 @@ test('Connection Manager reports the result of its own application', async conte
         { label: 'Proxy', field: 'proxy', command: 'proxy', invalid: '不存在的代理', notice: 'warning' },
         { label: 'Tokenizer', field: 'tokenizer', command: 'tokenizer', invalid: '不存在的分词器', notice: 'warning', api: 'kobold' },
     ]) {
-        await context.test(`${setting.label} validation has one application notice and preserves ordinary command behavior`, async () => {
+        test(`${setting.label} validation has one application notice and preserves ordinary command behavior`, async () => {
             const profile = await reset(`Quiet-${setting.label}`);
             let validValue = setting.command === 'proxy' ? profile.proxy : 'openai_compat';
             if (setting.command === 'tokenizer') {
@@ -471,5 +485,4 @@ test('Connection Manager reports the result of its own application', async conte
             }
         });
     }
-    assert.deepEqual(errors, []);
 });
