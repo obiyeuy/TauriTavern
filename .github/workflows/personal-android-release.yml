@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Validate public repository and release identity
         id: identity
@@ -146,7 +146,7 @@ jobs:
 
       - uses: pnpm/setup@v2
         with:
-          runtime: node@22
+          runtime: node@24
           cache: true
           install: false
 
@@ -206,7 +206,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: actions/download-artifact@v8
         with:

@@ -1,254 +1,49 @@
-<div align="center">
+# TauriTavern Personal · Android
 
-<img src="docs/images/tauritavern-readme-hero.webp" alt="TauriTavern" width="720">
-
-# TauriTavern
-
-**SillyTavernをネイティブアプリに — デスクトップでもモバイルでも、すぐに使えます**
+Android スマートフォンでキャラクターカードを使って AI と会話するアプリです。**obiyeuy** が保守し、チャット操作、API 設定、ローカルデータの保存、拡張機能の互換性を改善しています。
 
 [简体中文](README.md) · [English](README.en.md) · **日本語** · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md)
 
-[ダウンロード](https://tauritavern.github.io/en/downloads/) · [ドキュメント](https://tauritavern.github.io/en/) · [リリース](https://github.com/Darkatse/TauriTavern/releases) · [Issue](https://github.com/Darkatse/TauriTavern/issues)
+[ダウンロードとバージョン](https://github.com/obiyeuy/TauriTavern/releases) · [問題報告](https://github.com/obiyeuy/TauriTavern/issues) · [Android のビルドと検証](https://github.com/obiyeuy/TauriTavern/actions)
 
-[![Release](https://img.shields.io/github/v/release/Darkatse/TauriTavern?style=flat-square&color=1f9d96)](https://github.com/Darkatse/TauriTavern/releases/latest)
-[![License](https://img.shields.io/github/license/Darkatse/TauriTavern?style=flat-square)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/Darkatse/TauriTavern?style=flat-square&labelColor=black&color=ffcb47)](https://github.com/Darkatse/TauriTavern/stargazers)
-[![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux%20%C2%B7%20Android%20%C2%B7%20iOS-1f9d96?style=flat-square)](https://tauritavern.github.io/en/downloads/)
-<br/>
-[![Telegram](https://img.shields.io/badge/Telegram-Group-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/TauriTavern)
-[![Discord](https://img.shields.io/badge/Discord-Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/hn57aFGe8h)
-[![Issues](https://img.shields.io/github/issues/Darkatse/TauriTavern?style=flat-square&logo=github)](https://github.com/Darkatse/TauriTavern/issues)
-[![Canary](https://img.shields.io/github/actions/workflow/status/Darkatse/TauriTavern/canary-release.yml?style=flat-square&logo=githubactions&label=canary)](https://github.com/Darkatse/TauriTavern/actions/workflows/canary-release.yml)
+## 対象と機能
 
-</div>
+対象は **Android 8.0 以上、ARM64**。アプリがチャットと設定をローカルで管理し、モデルの応答には利用者が設定した API サービスを使います。
 
-<p align="center"><sub>TauriTavern のロゴをデザインしてくださった <a href="https://github.com/shiyue137">@shiyue137</a> さん、ありがとうございます 💛</sub></p>
+キャラクターカード、チャット、ワールドブック、プリセットには SillyTavern のデータ形式を使用します。モバイル画面、API 入力と接続テスト、保存の確認と再試行、拡張機能・カードスクリプト・メディアの互換性を継続的に改善します。互換性は実装と検証済みの動作に基づきます。
 
-## ダウンロード
+## インストールとスマートフォンでの更新
 
-<div align="center">
+個人版のパッケージ名は `com.tauritavern.personal`。APK は[このリポジトリの Releases](https://github.com/obiyeuy/TauriTavern/releases)で配布し、ファイル名の末尾は `android-arm64-v8a.apk` です。
 
-[![⬇ Download TauriTavern](https://img.shields.io/badge/%E2%AC%87_Download-TauriTavern-1f9d96?style=for-the-badge)](https://tauritavern.github.io/en/downloads/)
+**リポジトリは公開済みですが、最初の公開 APK Release とオンライン更新は準備中です。** ローカルビルドや実機へのインストール成功は、Release の公開完了を意味しません。
 
-**端末を自動判別し、最新の安定版をワンクリックでダウンロード**
+公開後は最初の APK をインストールし、以後はアプリのバージョン／情報設定から更新を確認します。Release を開いて APK をダウンロードし、Android のインストーラーで更新を承認します。USB 接続は不要です。同じパッケージ名と署名で上書き更新すると、既存のアプリデータを保持できます。
 
-[![Windows](https://custom-icon-badges.demolab.com/badge/Windows-0078D6?logo=windows11&logoColor=white&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
-[![macOS](https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white)](https://tauritavern.github.io/en/downloads/platforms/)
-[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
-[![Android](https://img.shields.io/badge/Android-3DDC84?logo=android&logoColor=white&style=flat-square)](https://tauritavern.github.io/en/downloads/platforms/)
-[![iOS TestFlight](https://img.shields.io/badge/iOS-TestFlight-0D96F6?logo=apple&logoColor=white&style=flat-square)](https://testflight.apple.com/join/gpqAdeTm)
-[![HarmonyOS Beta](https://img.shields.io/badge/HarmonyOS-Beta-000000?logo=harmonyos&logoColor=white&style=flat-square)](https://github.com/Darkatse/TauriTavern/releases/latest)
+Stable は `main` から固定バージョンを公開し、Canary は `dev` から検証後に `Canary` tag を更新します。[公開手順](docs/PersonalDevelopment.md)を参照してください。
 
-[すべてのプラットフォーム](https://tauritavern.github.io/en/downloads/platforms/) · [GitHub Releases](https://github.com/Darkatse/TauriTavern/releases)
+## 使い始める
 
-</div>
+キャラクターを作成またはインポートし、API の提供元またはプロトコルを選択します。ベース URL、API キー、モデル ID を別々の欄に入力して保存し、接続テストを実行します。ベース URL の例は `https://api.example.com/v1` です。モデルとプロトコルはサービスの説明に従ってください。
 
-<details>
-<summary><b>📦 パッケージマネージャーでインストール</b>（Windows · macOS · Linux）</summary>
+404 が出る場合は、最終リクエスト URL、プロトコル、モデル、サーバーの応答を確認します。問題報告にはアプリ・端末・OS のバージョンと再現手順を添え、画像とログの API キーを伏せてください。
 
-### Windows · WinGet
+## 開発
 
-PowerShellで次を実行します。
-
-```powershell
-winget install --id TauriTavern.TauriTavern
-```
-
-### Windows · Scoop
-
-PowerShellで次を実行します。
-
-```powershell
-scoop bucket add Darkatse https://github.com/Darkatse/Scoop-Darkatse.git
-scoop install Darkatse/TauriTavern
-```
-
-### macOS · Homebrew
-
-ターミナルで次を実行します。
+ローカル環境には **Node.js 24、pnpm 11、Rust stable** を推奨します。Android のビルドには **JDK 21、Android SDK 36、NDK r29**、個人版の公開には元の署名設定が必要です。
 
 ```sh
-brew install --cask tauritavern
-```
-
-### Linux
-
-**Arch Linux · AUR**
-
-お使いのAURヘルパーで[`tauritavern-bin`](https://aur.archlinux.org/packages/tauritavern-bin)をインストールします。
-
-```sh
-yay -S tauritavern-bin
-```
-
-このパッケージは[@LX2000WASD](https://github.com/LX2000WASD)さんが管理しています。[TauriTavern-aur](https://github.com/LX2000WASD/TauriTavern-aur)での継続的なメンテナンスに感謝します。
-
-**Debian · Ubuntu · Fedora · openSUSE · NixOS**
-
-スクリプトがシステムを判別し、適切な方法でインストールします。Nixが導入済みであれば、ほかのLinux環境でも利用できます。
-
-**安定版**
-
-```sh
-curl -fsSL https://get.tauritavern.com/linux.sh | sh
-```
-
-**Nix / NixOS**
-
-Nixが導入済みの場合は、TauriTavernをユーザープロファイルへ直接追加できます。
-
-```sh
-nix profile add github:Darkatse/TauriTavern#tauritavern
-```
-
-**Flatpak**
-
-```sh
-flatpak remote-add --user --if-not-exists \
-  tauritavern \
-  https://flatpak.tauritavern.com/tauritavern.flatpakrepo
-flatpak install --user tauritavern com.tauritavern.client
-```
-
-</details>
-
-### Canary
-
-Canary版は毎日更新され、最新の機能や修正が含まれますが、安定性は安定版に及ばない場合があります。新しいバージョンを試したい場合や、安定版で問題が発生している場合は、Canary版でその問題が修正されているか確認してみてください。
-
-Windows、macOS、モバイル向けビルドは[Canary Release](https://github.com/Darkatse/TauriTavern/releases/tag/Canary)から入手できます。
-
-<details>
-<summary><b>Linux向けCanaryのインストール</b></summary>
-
-**Linux**
-
-```sh
-curl -fsSL https://get.tauritavern.com/linux.sh \
-  | sh -s -- --channel canary
-```
-
-**Nix / NixOS**
-
-```sh
-nix profile add github:Darkatse/TauriTavern/Canary#canary
-```
-
-</details>
-
-> [!TIP]
-> **iOS**： [公開TestFlightベータ](https://testflight.apple.com/join/gpqAdeTm)からインストールできます。iOS 15.0以降が必要です。iOS 15.0〜16.3は限定サポートで、完全サポートはiOS 16.4以降です。TestFlight版にはAppleのTestFlight規約と利用上の制限が適用されます。
->
-> **Windowsポータブル版**：システムにWebView2ランタイムが必要です。
->
-> **HarmonyOS（ベータ）**：ReleaseのHAPはHarmonyOS NEXT向けです。ご自身の証明書で署名してからインストールしてください。[Auto-Installer](https://github.com/likuai2010/auto-installer/)の利用をおすすめします。現在はエミュレーターでのみテストしています。
-
-## TauriTavernとは
-
-TauriTavernは、[SillyTavern](https://github.com/SillyTavern/SillyTavern)をネイティブアプリとして移植したプロジェクトです。フロントエンドは上流の使用感を保ったまま1.19.0へ同期し、バックエンドはNode.jsからRust（Tauri v2）で作り直しています。
-
-Node.jsのインストールやコマンドライン操作は必要ありません。ダウンロードして、そのまま起動できます。キャラクターカード、チャット、プリセット、世界情報、フロントエンド拡張はSillyTavernと互換性があります。
-
-> 注：TauriTavernは独立して管理されているオープンソースプロジェクトであり、SillyTavernの公式クライアントではありません。AGPL-3.0ライセンスのもと、無償で公開されています。利用前にライセンス条項をご確認ください。
-
-## 主な機能
-
-- 🖥️ **5つのネイティブプラットフォーム**：Windows、macOS、Linux、Android、iOSで同じように利用できます。ネイティブのHarmonyOS版は現在ベータです
-- 🎭 **SillyTavernとの互換性**：フロントエンドは上流1.19.0と同期し、データ形式とディレクトリ構成にも対応
-- 🧩 **フロントエンド拡張**：ネイティブGitを内蔵し、画面上でインストール、更新、ブランチ切り替えを行えます（Node.js専用のバックエンドプラグインは非対応）
-- 🔄 **端末間同期**：暗号化されたLANペアリング、またはTT-Sync v2を使ったリモート自動アップロードに対応
-- 🤖 **Agentフレームワーク**：ツール呼び出し、Skills、サブエージェント、実行タイムラインを備えています。開発は継続中です
-- 📦 **簡単な移行**：SillyTavern用エクスポートスクリプトとアプリ内インポートを用意
-- ⚡ **動作の最適化**：段階的な起動処理とチャットDOMの仮想化により、非常に長いチャットでもスムーズに操作できます
-- 🔒 **ユーザーデータを手元で管理**：データは端末内に保存され、必要に応じてポータブルモードも選べます
-
-## スクリーンショット
-
-<div align="center">
-<img src="docs/images/tauritavern-multidevice-cutout.webp" alt="デスクトップとモバイルで動作するTauriTavern" width="760">
-</div>
-
-## アーキテクチャ概要
-
-Rustバックエンドは、Clean Architectureに基づくCargoワークスペース（`src-tauri/crates/`）として構成されています。
-
-- `tauritavern`：Tauriホスト、コマンド層、コンポジションルート
-- `tt-application` · `tt-ports` · `tt-domain` · `tt-contracts`：ユースケース、ポート、ドメインモデル、crate間の契約
-- `tt-adapter-*`：ストレージ、HTTP、メディア、同期、拡張、トークナイザーの実装
-
-フロントエンドは上流SillyTavernにモジュール化されたTauri注入レイヤー（`src/tauri/main/`）を組み合わせ、`window.__TAURITAVERN__`プラットフォームABIを通じてRustバックエンドと通信します。詳しくは[docs/BackendStructure.md](docs/BackendStructure.md)と[docs/FrontendGuide.md](docs/FrontendGuide.md)をご覧ください。
-
-<details>
-<summary><b>🛠 開発</b>（前提環境 · 主なコマンド · Tauri Pilot · ポータブルビルド · FasTools）</summary>
-
-**前提環境**：Rust stable（edition 2024）· Node.js 22.13以降 · pnpm 11 · Tauri CLI
-
-```bash
-git clone https://github.com/Darkatse/TauriTavern.git
+git clone https://github.com/obiyeuy/TauriTavern.git
 cd TauriTavern
-pnpm install
+pnpm install --frozen-lockfile
+pnpm run check
+pnpm run android:build:personal
 ```
 
-**主なコマンド**：
+作業ブランチで開発し、レビューと Android 品質チェック後に `dev` に統合します。Stable はレビュー済みの `main` から公開します。[開発ガイド](docs/PersonalDevelopment.md)、[Android](docs/AndroidDevelopment.md)、[フロントエンド](docs/FrontendGuide.md)、[ホスト契約](docs/FrontendHostContract.md)、[バックエンド](docs/BackendStructure.md)を参照してください。貢献前に [CONTRIBUTING.md](CONTRIBUTING.md) を確認してください。
 
-```bash
-pnpm run check         # フロントエンドのガードレール、型、契約とRust開発チェック
-pnpm run web:build     # フロントエンドバンドルをビルド（Rspack）
-pnpm run tauri:dev     # デスクトップ開発モード
-pnpm run tauri:build   # デスクトップ用インストーラーをビルド
-pnpm run android:dev   # Android開発モード
-pnpm run ios:dev       # iOS開発モード
-```
+## 出典とライセンス
 
-**Tauri Pilot（AIエージェントを使ったUI開発）**
+[Darkatse/TauriTavern](https://github.com/Darkatse/TauriTavern) を基に、[SillyTavern](https://github.com/SillyTavern/SillyTavern) と [Tauri](https://tauri.app/) を使用しています。上流の履歴と作者・貢献者のクレジットを保持しています。元のビジュアルデザインは [@shiyue137](https://github.com/shiyue137) によるものです。
 
-このプロジェクトには、開発時にのみ有効になる[Tauri Pilot](https://github.com/mpiton/tauri-pilot)プラグインと権限設定が含まれています。アクセシビリティのスナップショットを通じて、AIエージェントがデスクトップ、Android、iOSシミュレーターのWebViewを確認・操作できます。通常の開発コマンドとリリースビルドでは有効になりません。
-
-```bash
-cargo install tauri-pilot-cli  # 初回のみ必要
-pnpm run tauri:dev:pilot       # デスクトップ
-pnpm run android:dev:pilot     # Android。接続前にソケットを転送（docs/AndroidDevelopment.md）
-pnpm run ios:dev:pilot         # iOSシミュレーター
-```
-
-アプリを起動したら、別のターミナルで次の基本手順を実行します。
-
-```bash
-tauri-pilot ping
-tauri-pilot snapshot -i
-tauri-pilot click @e3          # 現在のスナップショットにあるrefを使用
-tauri-pilot diff -i
-tauri-pilot logs --level error
-```
-
-操作前にスナップショットを取得し、一度に1つずつ操作してください。非同期の更新後は`wait`を使い、確認には`assert`を優先します。MCPに対応したエージェントでは、`tauri-pilot mcp`をstdioサーバーとして登録できます。
-
-**ポータブルビルド**：`pnpm run tauri:build:portable`（`release/`へ出力）。`TAURITAVERN_RUNTIME_MODE=portable`または`portable.flag`ファイルを使うと、ポータブルランタイムを明示的に有効化できます。
-
-**FasTools**：開発と配布時の問題調査に推奨しているツールセットです。`pnpm run fastools:build`でビルドし、`pnpm run fastools:run`で実行します。
-
-各プラットフォームについては、[docs/AndroidDevelopment.md](docs/AndroidDevelopment.md)と[docs/iOSDevelopment.md](docs/iOSDevelopment.md)をご覧ください。
-
-</details>
-
-## ドキュメント
-
-- 📖 [オンラインドキュメント](https://tauritavern.github.io/en/)：使い方、Agent、アーキテクチャ、API、ダウンロードを扱う中英2言語のガイド
-- [docs/FrontendGuide.md](docs/FrontendGuide.md)：フロントエンドのアーキテクチャと拡張ガイド
-- [docs/FrontendHostContract.md](docs/FrontendHostContract.md)：公開ホストレイヤーの契約
-- [docs/BackendStructure.md](docs/BackendStructure.md)：バックエンドのClean Architectureとcrate境界
-- [docs/CurrentState/](docs/CurrentState/README.md)：実装済みモジュールの現状
-
-## コントリビューション
-
-IssueとPull Requestを受け付けています。最初に[CONTRIBUTING.md](CONTRIBUTING.md)を読み、緊急の修正を除いて`dev`ブランチを対象にしてください。
-
-## 謝辞とライセンス
-
-[SillyTavern](https://github.com/SillyTavern/SillyTavern)と[Tauri](https://tauri.app/)を基盤として開発しています。[Cocktail](https://github.com/Lianues/cocktail)、[Tavern-Helper](https://github.com/N0VI028/JS-Slash-Runner)、[LittleWhiteBox](https://github.com/RT15548/LittleWhiteBox)、[MikTik](https://github.com/Darkatse/MikTik)、[TauriTavern AURパッケージ](https://github.com/LX2000WASD/TauriTavern-aur)を管理している[@LX2000WASD](https://github.com/LX2000WASD)さん、そしてHarmonyOS版を移植した[@LeenHawk](https://github.com/LeenHawk)さんに感謝します。
-
-[AGPL-3.0](LICENSE)（SillyTavernと同系統のライセンス）のもとで公開しています。
-
-[![Contributors](https://contrib.rocks/image?repo=Darkatse/TauriTavern)](https://github.com/Darkatse/TauriTavern/graphs/contributors)
-
-<p align="center"><sub><em>TauriTavernチームが心を込めて開発しています ❤️</em></sub></p>
+[AGPL-3.0](LICENSE) に従って公開しています。
