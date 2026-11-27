@@ -28,16 +28,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
           TESTED_HEAD: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
 
-          # workflow_run.pull_requests can be empty; use GitHub's commit association.
-          pr_numbers=$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/$TESTED_HEAD/pulls" \
+          # A commit already on main resolves to its merged PR, not an open promotion.
+          pr_numbers=$(gh api "repos/$GITHUB_REPOSITORY/pulls" \
+            --method GET -f state=open -f "head=$REPOSITORY_OWNER:$SOURCE_BRANCH" \
             --paginate --jq '.[].number')
           if [[ -z "$pr_numbers" ]]; then
-            echo "No pull requests are associated with the tested commit."
+            echo "No open pull requests use the tested source branch."
             exit 0
           fi
 
