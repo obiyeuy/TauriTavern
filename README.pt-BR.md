@@ -30,7 +30,7 @@ Em caso de 404, confira a URL final da requisição, o protocolo, o modelo e a r
 
 ## Desenvolvimento
 
-Use **Node.js 24, pnpm 11, Rust stable, JDK 21, Android SDK 36 e NDK r29**. Releases pessoais também exigem a configuração original de assinatura.
+Para o ambiente local, recomendamos **Node.js 24, pnpm 11 e Rust stable**. Compilações Android exigem **JDK 21, Android SDK 36 e NDK r29**; releases pessoais também exigem a configuração original de assinatura.
 
 ```sh
 git clone https://github.com/obiyeuy/TauriTavern.git

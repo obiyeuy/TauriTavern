@@ -30,7 +30,7 @@ Stable は `main` から固定バージョンを公開し、Canary は `dev` か
 
 ## 開発
 
-**Node.js 24、pnpm 11、Rust stable、JDK 21、Android SDK 36、NDK r29** が必要です。個人版の公開には元の署名設定も必要です。
+ローカル環境には **Node.js 24、pnpm 11、Rust stable** を推奨します。Android のビルドには **JDK 21、Android SDK 36、NDK r29**、個人版の公開には元の署名設定が必要です。
 
 ```sh
 git clone https://github.com/obiyeuy/TauriTavern.git

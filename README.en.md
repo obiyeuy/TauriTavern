@@ -44,7 +44,7 @@ A provider's base URL may look like `https://api.example.com/v1`. Use its docume
 
 ## Development
 
-Use **Node.js 24, pnpm 11, Rust stable, JDK 21, Android SDK 36 and NDK r29**. Personal releases also require the original signing configuration.
+Recommended local tooling: **Node.js 24, pnpm 11 and Rust stable**. Android builds require **JDK 21, Android SDK 36 and NDK r29**; personal releases also require the original signing configuration.
 
 ```sh
 git clone https://github.com/obiyeuy/TauriTavern.git

@@ -30,7 +30,7 @@ Stable выпускается из `main` с фиксированной верс
 
 ## Разработка
 
-Нужны **Node.js 24, pnpm 11, Rust stable, JDK 21, Android SDK 36 и NDK r29**. Публикация персональной версии также требует исходной конфигурации подписи.
+Для локальной разработки рекомендуются **Node.js 24, pnpm 11 и Rust stable**. Для сборки Android нужны **JDK 21, Android SDK 36 и NDK r29**, а для персональных релизов — исходная конфигурация подписи.
 
 ```sh
 git clone https://github.com/obiyeuy/TauriTavern.git

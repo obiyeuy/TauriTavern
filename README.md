@@ -62,7 +62,7 @@
 
 ## 开发
 
-需要 **Node.js 24、pnpm 11、Rust stable、JDK 21、Android SDK 36、NDK r29**。个人发行还需要原签名配置。
+推荐本地使用 **Node.js 24、pnpm 11 与 Rust stable**。Android 构建需要 **JDK 21、Android SDK 36、NDK r29**；个人发行还需要原签名配置。
 
 ```sh
 git clone https://github.com/obiyeuy/TauriTavern.git
